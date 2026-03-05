@@ -1,0 +1,30 @@
+{
+  "records": [
+    {
+      "country": "us",
+      "date": "2026-03-02",
+      "value": 871.377,
+      "unit": "Mrd. USD",
+      "label": "TGA Closing Balance",
+      "fetched_at": "2026-03-04T14:30:21.126264Z"
+    },
+    {
+      "country": "us",
+      "date": "2026-03-02",
+      "value": 871.377,
+      "unit": "Mrd. USD",
+      "label": "TGA Closing Balance",
+      "fetched_at": "2026-03-04T14:30:21.126264Z",
+      "value_mio": 871377.0
+    },
+    {
+      "country": "de",
+      "date": "31.01.2026",
+      "value": 1810.981529833,
+      "unit": "Mrd. EUR",
+      "label": "Kreditbestand (Schuldenstand)",
+      "fetched_at": "2026-03-04T14:30:32.065985Z"
+    }
+  ],
+  "updated": "2026-03-04T14:30:32.065985Z"
+}
