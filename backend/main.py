@@ -21,7 +21,7 @@ from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
-    title="Finanzdaten API",
+    title="Finix API",
     description="Abfrage und Verlauf von Staatsfinanz-Daten (USA, DE, AT, CA, MX, CH)",
     version="1.0",
 )

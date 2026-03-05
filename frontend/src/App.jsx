@@ -188,9 +188,9 @@ export default function App() {
   return (
     <div className="app">
       <header style={{ marginBottom: '1.5rem' }}>
-        <h1 style={{ margin: 0, fontSize: '1.75rem' }}>Staatsfinanzen im Überblick</h1>
+        <h1 style={{ margin: 0, fontSize: '1.75rem' }}>Finix</h1>
         <p style={{ margin: '0.25rem 0 0', color: '#555' }}>
-          Offizielle Daten (TGA, Kreditbestand, Nettofinanzierungssaldo) – Abfrage und Verlauf
+          Staatsfinanzen im Überblick – offizielle Daten (TGA, Kreditbestand, Nettofinanzierungssaldo)
         </p>
       </header>
 

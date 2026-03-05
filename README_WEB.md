@@ -1,4 +1,4 @@
-# Finanzdaten – Web-Projekt
+# Finix
 
 Backend (Python/FastAPI) und Frontend (React/Vite) für die Abfrage und Darstellung von Staatsfinanz-Daten.
 
