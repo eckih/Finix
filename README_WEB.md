@@ -7,7 +7,25 @@ Backend (Python/FastAPI) und Frontend (React/Vite) für die Abfrage und Darstell
 - Python 3.10+ (mit pip)
 - Node.js 18+ (mit npm)
 
-## Backend starten
+**Oder:** Docker + Docker Compose (dann sind alle Abhängigkeiten in den Containern).
+
+## Mit Docker Compose starten
+
+Im Projektroot:
+
+```bash
+# Optional: .env mit Zeile FRED_API_KEY=dein-key anlegen (für USA FRED-Daten).
+# Docker Compose liest .env für Variablen; ohne .env läuft die App trotzdem.
+
+docker compose up --build
+```
+
+- **Frontend:** http://localhost:5173  
+- **Backend-API:** http://localhost:8000 (Dokumentation: http://localhost:8000/docs)
+
+Die SQLite-Datenbank liegt im Ordner `data/` (wird als Volume gemountet). Zum Stoppen: `Ctrl+C` oder `docker compose down`.
+
+## Ohne Docker: Backend starten
 
 Im **Projektroot** (Ordner `Python Abfragen`):
 
@@ -24,7 +42,7 @@ API-Dokumentation: http://127.0.0.1:8000/docs
 
 **USA + FRED:** Für die USA werden optional zusätzlich die FRED-Serien **WDTGAL** (TGA Mittwochsstand) und **RRPONTSYD** (Overnight Reverse Repurchase Agreements) abgefragt, wenn die Umgebungsvariable `FRED_API_KEY` gesetzt ist. Kostenloser Key: [fred.stlouisfed.org/docs/api/api_key.html](https://fred.stlouisfed.org/docs/api/api_key.html)
 
-## Frontend starten
+## Ohne Docker: Frontend starten
 
 In einem **zweiten Terminal**:
 
@@ -49,9 +67,11 @@ Frontend: http://localhost:5173
 ```
 Python Abfragen/
 ├── backend/
+│   ├── Dockerfile
 │   ├── main.py          # FastAPI-App, Endpoints /api/countries, /api/history, /api/fetch/:country
 │   └── requirements.txt
 ├── frontend/
+│   ├── Dockerfile
 │   ├── src/
 │   │   ├── App.jsx      # React: Länderauswahl, Chart (Recharts), Tabelle
 │   │   ├── main.jsx
@@ -61,6 +81,7 @@ Python Abfragen/
 │   └── vite.config.js   # Proxy /api -> Backend
 ├── data/
 │   └── finance.db       # SQLite (wird vom Backend genutzt)
+├── docker-compose.yml
 ├── USA_Kontostand.py    # Abfrage-Logik (US, DE, AT, CA, MX, CH)
 ├── persist.py           # SQLite-Persistenz
 └── requirements.txt
