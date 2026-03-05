@@ -75,3 +75,18 @@ Python Abfragen/
 | GET | `/api/latest?country=us` | Neuester Eintrag (pro Land) |
 | POST | `/api/fetch/{country}` | Live-Abfrage ausführen und in DB speichern |
 | POST | `/api/fetch/us/history?limit=500` | USA: Historische Daten (TGA, WDTGAL, RRPONTSYD) von Treasury & FRED laden und speichern |
+
+## Git / GitHub
+
+Das Projekt ist ein lokales Git-Repository. Auf GitHub hochladen:
+
+1. Auf [GitHub](https://github.com/new) ein neues Repository anlegen (ohne README, ohne .gitignore).
+2. Lokal mit dem neuen Remote verbinden und pushen:
+
+```bash
+git remote add origin https://github.com/DEIN_USERNAME/DEIN_REPO.git
+git branch -M main
+git push -u origin main
+```
+
+`.env` mit dem FRED-API-Key liegt in `.gitignore` und wird nicht mit hochgeladen.
