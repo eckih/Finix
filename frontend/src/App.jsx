@@ -705,6 +705,20 @@ export default function App() {
           </button>
           <button
             type="button"
+            onClick={() => setView('news')}
+            style={{
+              padding: '0.35rem 0.75rem',
+              border: view === 'news' ? '2px solid #2563eb' : '1px solid #ccc',
+              borderRadius: 6,
+              background: view === 'news' ? '#eff6ff' : '#fff',
+              cursor: 'pointer',
+              fontSize: '0.95rem',
+            }}
+          >
+            {t('menu.news')}
+          </button>
+          <button
+            type="button"
             onClick={() => setView('statistik')}
             style={{
               padding: '0.35rem 0.75rem',
@@ -730,20 +744,6 @@ export default function App() {
             }}
           >
             {t('menu.konfiguration')}
-          </button>
-          <button
-            type="button"
-            onClick={() => setView('news')}
-            style={{
-              padding: '0.35rem 0.75rem',
-              border: view === 'news' ? '2px solid #2563eb' : '1px solid #ccc',
-              borderRadius: 6,
-              background: view === 'news' ? '#eff6ff' : '#fff',
-              cursor: 'pointer',
-              fontSize: '0.95rem',
-            }}
-          >
-            {t('menu.news')}
           </button>
         </nav>
         <div style={{ marginTop: '0.5rem', fontSize: '0.9rem' }}>
@@ -1176,7 +1176,11 @@ export default function App() {
         <>
       <section style={{ background: '#fff', padding: '1rem', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', marginBottom: '1.5rem' }}>
         <h2 style={{ margin: '0 0 0.25rem', fontSize: '1.1rem' }}>{t('news.title')}</h2>
-        <p style={{ margin: '0 0 1rem', fontSize: '0.8rem', color: '#64748b' }}>{t('news.symbolHint')} {t('news.tooltipHint')}</p>
+        <p style={{ margin: '0 0 0.5rem', fontSize: '0.8rem', color: '#64748b' }}>{t('news.symbolHint')} {t('news.tooltipHint')}</p>
+        <p style={{ margin: '0 0 1rem', fontSize: '0.8rem', color: '#64748b' }}>
+          {t('news.sourceAlphaVantage')}:{' '}
+          <a href="https://www.alphavantage.co/" target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb' }}>alphavantage.co</a>
+        </p>
         {error && view === 'news' && (
           <div role="alert" style={{ padding: '0.75rem', background: '#fef2f2', color: '#b91c1c', borderRadius: 6, marginBottom: '1rem', fontSize: '0.9rem' }}>
             {error}

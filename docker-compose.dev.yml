@@ -1,0 +1,20 @@
+# Entwicklung: Quellcode als Volume, damit Änderungen ohne Rebuild wirksam werden.
+# Start: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Backend: uvicorn --reload lädt bei Änderungen neu.
+# Frontend: Vite HMR übernimmt Änderungen automatisch (npm run dev).
+
+name: finix
+
+services:
+  backend:
+    volumes:
+      - ./backend:/app/backend
+      - ./USA_Kontostand.py:/app/USA_Kontostand.py
+      - ./persist.py:/app/persist.py
+    command: python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    volumes:
+      - ./frontend:/app
+    # Auf dem Host einmal: cd frontend && npm install
+    command: npm run dev

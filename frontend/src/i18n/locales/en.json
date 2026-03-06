@@ -13,7 +13,7 @@
   "config": {
     "title": "Configuration",
     "aiModelsHint": "Responses are provided by the selected models (Gemini, Claude Sonnet, LM Studio). The assistant in Cursor or your IDE is separate.",
-    "lmStudioTitle": "LM Studio (local model)",
+    "lmStudioTitle": "Choose configured model (local or online)",
     "gemini25Flash": "Gemini 2.5 Flash",
     "gemini25Pro": "Gemini 2.5 Pro",
     "sonnet46": "Sonnet 4.6 (Claude)",
@@ -34,6 +34,7 @@
     "translating": "Translation loading…",
     "tooltipHint": "Translation on hover in tooltip",
     "symbolHint": "Empty = all news, otherwise filtered by symbol. Auto-refresh every 5 min.",
+    "sourceAlphaVantage": "News from Alpha Vantage",
     "aiButton": "AI",
     "aiQuestionStocks": "Which stock prices could this message affect?",
     "aiQuestionBtc": "Does this message have a bullish or bearish effect on BTC?",
