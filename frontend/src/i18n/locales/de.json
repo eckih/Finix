@@ -44,7 +44,9 @@
     "tga": "TGA Closing Balance",
     "wdtgal": "WDTGAL (TGA Wed)",
     "rrp": "RRPONTSYD (Overnight RRP)",
-    "wresbal": "WRESBAL (Reserve Balances)"
+    "wresbal": "WRESBAL (Reserve Balances)",
+    "sofr": "SOFR",
+    "effr": "EFFR"
   },
   "legend": {
     "sourceFred": "Quelle: FRED – {{label}}"

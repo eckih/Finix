@@ -142,7 +142,7 @@ def fetch_country(country: str):
         label=result.get("label", ""),
         **extra,
     )
-    # USA: WDTGAL, RRPONTSYD und WRESBAL als eigene Zeitreihen speichern (für Chart)
+    # USA: WDTGAL, RRPONTSYD, WRESBAL, SOFR, EFFR als eigene Zeitreihen speichern (für Chart)
     if result.get("country") == "us":
         if result.get("fred_wdtgal_date") is not None and result.get("fred_wdtgal_value_mio") is not None:
             persist.save_record(
@@ -168,6 +168,22 @@ def fetch_country(country: str):
                 unit="Mrd. USD",
                 label="WRESBAL (Reserve Balances)",
             )
+        if result.get("fred_sofr_date") is not None and result.get("fred_sofr_value") is not None:
+            persist.save_record(
+                country="us",
+                date=result["fred_sofr_date"],
+                value=result["fred_sofr_value"],
+                unit="%",
+                label="SOFR",
+            )
+        if result.get("fred_effr_date") is not None and result.get("fred_effr_value") is not None:
+            persist.save_record(
+                country="us",
+                date=result["fred_effr_date"],
+                value=result["fred_effr_value"],
+                unit="%",
+                label="EFFR",
+            )
     return {"ok": True, "record": result}
 
 
@@ -176,7 +192,7 @@ def fetch_us_history(
     limit: int = Query(100, ge=10, le=500, description="Anzahl historischer Einträge pro Reihe"),
     start_date: str = Query("2020-01-01", description="Ab diesem Datum (YYYY-MM-DD), z. B. 2020-01-01"),
 ):
-    """Historische Daten für TGA, WDTGAL, RRPONTSYD und WRESBAL abrufen und in der DB speichern (ab start_date)."""
+    """Historische Daten für TGA, WDTGAL, RRPONTSYD, WRESBAL, SOFR und EFFR abrufen und in der DB speichern (ab start_date)."""
     import USA_Kontostand as api
     import persist
     records = api.get_us_historical(limit_treasury=limit, limit_fred=limit, start_date=start_date)

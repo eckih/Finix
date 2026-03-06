@@ -150,12 +150,14 @@ def get_us_account_balance_pro():
                 "unit": "Mrd. USD",
                 "label": "TGA Closing Balance",
             }
-            # Optional: FRED-Daten (WDTGAL = TGA Mittwoch, RRPONTSYD = Overnight Reverse Repos, WRESBAL = Reserve Balances)
+            # Optional: FRED-Daten (WDTGAL, RRPONTSYD, WRESBAL, SOFR, EFFR)
             fred_key = os.environ.get("FRED_API_KEY", "").strip()
             if fred_key:
                 wdtgal = _get_fred_latest("WDTGAL", fred_key)  # Millions of USD
                 rrp = _get_fred_latest("RRPONTSYD", fred_key)  # Billions of USD
                 wresbal = _get_fred_latest("WRESBAL", fred_key)  # Millions of USD
+                sofr = _get_fred_latest("SOFR", fred_key)  # Percent
+                effr = _get_fred_latest("EFFR", fred_key)  # Percent
                 if wdtgal:
                     result["fred_wdtgal_date"] = wdtgal["date"]
                     result["fred_wdtgal_value_mio"] = wdtgal["value"]
@@ -168,6 +170,14 @@ def get_us_account_balance_pro():
                     result["fred_wresbal_date"] = wresbal["date"]
                     result["fred_wresbal_value_mio"] = wresbal["value"]
                     print(f"FRED WRESBAL (Reserve Balances): {wresbal['date']} = ${wresbal['value']:,.0f} Mio. USD")
+                if sofr:
+                    result["fred_sofr_date"] = sofr["date"]
+                    result["fred_sofr_value"] = sofr["value"]
+                    print(f"FRED SOFR: {sofr['date']} = {sofr['value']:.2f} %")
+                if effr:
+                    result["fred_effr_date"] = effr["date"]
+                    result["fred_effr_value"] = effr["value"]
+                    print(f"FRED EFFR: {effr['date']} = {effr['value']:.2f} %")
             return result
         else:
             print("Keine aktuellen Daten in der Tabelle gefunden.")
@@ -183,7 +193,7 @@ def get_us_account_balance_pro():
 
 def get_us_historical(limit_treasury: int = 100, limit_fred: int = 100, start_date: str = None):
     """
-    Holt historische Daten für TGA (Treasury), WDTGAL, RRPONTSYD und WRESBAL (FRED).
+    Holt historische Daten für TGA (Treasury), WDTGAL, RRPONTSYD, WRESBAL, SOFR und EFFR (FRED).
     start_date z. B. '2020-01-01' – dann werden Daten ab diesem Datum geholt.
     Liefert eine Liste von Datensätzen zum Speichern (country, date, value, unit, label).
     """
@@ -240,10 +250,12 @@ def get_us_historical(limit_treasury: int = 100, limit_fred: int = 100, start_da
     fred_key = os.environ.get("FRED_API_KEY", "").strip()
     if fred_key:
         limit_fred_actual = max(limit_fred, 2500) if start_date else limit_fred
-        for series_id, label in [
-            ("WDTGAL", "WDTGAL (TGA Wed)"),
-            ("RRPONTSYD", "RRPONTSYD (Overnight RRP)"),
-            ("WRESBAL", "WRESBAL (Reserve Balances)"),
+        for series_id, label, unit in [
+            ("WDTGAL", "WDTGAL (TGA Wed)", "Mrd. USD"),
+            ("RRPONTSYD", "RRPONTSYD (Overnight RRP)", "Mrd. USD"),
+            ("WRESBAL", "WRESBAL (Reserve Balances)", "Mrd. USD"),
+            ("SOFR", "SOFR", "%"),
+            ("EFFR", "EFFR", "%"),
         ]:
             obs = _get_fred_observations(
                 series_id, fred_key, limit=limit_fred_actual,
@@ -265,7 +277,7 @@ def get_us_historical(limit_treasury: int = 100, limit_fred: int = 100, start_da
                         "country": "us",
                         "date": o["date"],
                         "value": o["value"] * scale,
-                        "unit": "Mrd. USD",
+                        "unit": unit,
                         "label": label,
                     })
     return records

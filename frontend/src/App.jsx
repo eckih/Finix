@@ -44,6 +44,8 @@ const FRED_LEGEND_LINKS = {
   'WDTGAL (TGA Wed)': 'https://fred.stlouisfed.org/series/WDTGAL',
   'RRPONTSYD (Overnight RRP)': 'https://fred.stlouisfed.org/series/RRPONTSYD',
   'WRESBAL (Reserve Balances)': 'https://fred.stlouisfed.org/series/WRESBAL',
+  'SOFR': 'https://fred.stlouisfed.org/series/SOFR',
+  'EFFR': 'https://fred.stlouisfed.org/series/EFFR',
   'WALCL': 'https://fred.stlouisfed.org/series/WALCL',
 }
 
@@ -213,6 +215,8 @@ export default function App() {
   const labelWDTGAL = t('labels.wdtgal')
   const labelRRP = t('labels.rrp')
   const labelWRESBAL = t('labels.wresbal')
+  const labelSOFR = t('labels.sofr')
+  const labelEFFR = t('labels.effr')
 
   const chartData = (() => {
     if (isUS && history.some((r) => r.label)) {
@@ -221,7 +225,12 @@ export default function App() {
       const wdtgal = byLabel(labelWDTGAL)
       const rrp = byLabel(labelRRP)
       const wresbal = byLabel(labelWRESBAL)
-      let allDates = [...new Set([...tga.map((x) => x.date), ...wdtgal.map((x) => x.date), ...rrp.map((x) => x.date), ...wresbal.map((x) => x.date)])].sort()
+      const sofr = byLabel(labelSOFR)
+      const effr = byLabel(labelEFFR)
+      let allDates = [...new Set([
+        ...tga.map((x) => x.date), ...wdtgal.map((x) => x.date), ...rrp.map((x) => x.date),
+        ...wresbal.map((x) => x.date), ...sofr.map((x) => x.date), ...effr.map((x) => x.date),
+      ])].sort()
       const cutoffStr = '2020-01-01'
       allDates = allDates.filter((d) => d >= cutoffStr)
       return allDates.map((date) => {
@@ -229,12 +238,16 @@ export default function App() {
         const w = wdtgal.find((x) => x.date === date)
         const r = rrp.find((x) => x.date === date)
         const wb = wresbal.find((x) => x.date === date)
+        const sf = sofr.find((x) => x.date === date)
+        const ef = effr.find((x) => x.date === date)
         return {
           date,
           tga: t != null ? t.value : null,
           wdtgal: w != null ? w.value : null,
           rrp: r != null ? r.value : null,
           wresbal: wb != null ? wb.value : null,
+          sofr: sf != null ? sf.value : null,
+          effr: ef != null ? ef.value : null,
         }
       })
     }
@@ -248,10 +261,10 @@ export default function App() {
       }))
   })()
 
-  const hasMultiSeries = isUS && chartData.length > 0 && chartData.some((d) => d.tga != null || d.wdtgal != null || d.rrp != null || d.wresbal != null)
+  const hasMultiSeries = isUS && chartData.length > 0 && chartData.some((d) => d.tga != null || d.wdtgal != null || d.rrp != null || d.wresbal != null || d.sofr != null || d.effr != null)
   const yAxisUnit = isUS ? formatUnit('Mrd. USD') : formatUnit(history[0]?.unit) || history[0]?.unit || ''
 
-  const [visibleSeries, setVisibleSeries] = useState({ tga: true, wdtgal: true, rrp: true, wresbal: true })
+  const [visibleSeries, setVisibleSeries] = useState({ tga: true, wdtgal: true, rrp: true, wresbal: true, sofr: true, effr: true })
   const toggleSeries = (key) => setVisibleSeries((s) => ({ ...s, [key]: !s[key] }))
 
   const n = chartData.length
@@ -419,18 +432,36 @@ export default function App() {
                   <span style={{ width: 10, height: 10, backgroundColor: '#7c3aed' }} />
                   <span>{labelWRESBAL}</span>
                 </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={visibleSeries.sofr} onChange={() => toggleSeries('sofr')} />
+                  <span style={{ width: 10, height: 10, backgroundColor: '#ea580c' }} />
+                  <span>{labelSOFR}</span>
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={visibleSeries.effr} onChange={() => toggleSeries('effr')} />
+                  <span style={{ width: 10, height: 10, backgroundColor: '#0d9488' }} />
+                  <span>{labelEFFR}</span>
+                </label>
               </div>
             )}
             {chartData.length > 0 ? (
               <>
                 <ResponsiveContainer width="100%" height={320}>
-                  <LineChart data={slicedChartData.length > 0 ? slicedChartData : chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                  <LineChart data={slicedChartData.length > 0 ? slicedChartData : chartData} margin={{ top: 5, right: 50, left: 10, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
                     <XAxis dataKey="date" tick={{ fontSize: 12 }} />
                     <YAxis
+                      yAxisId="left"
                       tick={{ fontSize: 12 }}
                       tickFormatter={(v) => v.toLocaleString(locale, { maximumFractionDigits: 0 })}
                       label={yAxisUnit ? { value: yAxisUnit, angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fontSize: 12 } } : undefined}
+                    />
+                    <YAxis
+                      yAxisId="right"
+                      orientation="right"
+                      tick={{ fontSize: 12 }}
+                      tickFormatter={(v) => `${Number(v).toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 2 })} %`}
+                      label={{ value: '%', angle: 90, position: 'insideRight', style: { textAnchor: 'middle', fontSize: 12 } }}
                     />
                     <Tooltip
                       formatter={(value) => [value != null ? Number(value).toLocaleString(locale, { maximumFractionDigits: 2 }) : '–', t('chart.tooltipValue')]}
@@ -439,10 +470,12 @@ export default function App() {
                     <Legend content={<LegendWithLinks />} />
                     {hasMultiSeries ? (
                       <>
-                        {visibleSeries.tga && <Line type="monotone" dataKey="tga" name={labelTGA} stroke="#2563eb" strokeWidth={2} dot={false} connectNulls />}
-                        {visibleSeries.wdtgal && <Line type="monotone" dataKey="wdtgal" name={labelWDTGAL} stroke="#059669" strokeWidth={2} dot={false} connectNulls />}
-                        {visibleSeries.rrp && <Line type="monotone" dataKey="rrp" name={labelRRP} stroke="#dc2626" strokeWidth={2} dot={false} connectNulls />}
-                        {visibleSeries.wresbal && <Line type="monotone" dataKey="wresbal" name={labelWRESBAL} stroke="#7c3aed" strokeWidth={2} dot={false} connectNulls />}
+                        {visibleSeries.tga && <Line type="monotone" dataKey="tga" name={labelTGA} stroke="#2563eb" strokeWidth={2} dot={false} connectNulls yAxisId="left" />}
+                        {visibleSeries.wdtgal && <Line type="monotone" dataKey="wdtgal" name={labelWDTGAL} stroke="#059669" strokeWidth={2} dot={false} connectNulls yAxisId="left" />}
+                        {visibleSeries.rrp && <Line type="monotone" dataKey="rrp" name={labelRRP} stroke="#dc2626" strokeWidth={2} dot={false} connectNulls yAxisId="left" />}
+                        {visibleSeries.wresbal && <Line type="monotone" dataKey="wresbal" name={labelWRESBAL} stroke="#7c3aed" strokeWidth={2} dot={false} connectNulls yAxisId="left" />}
+                        {visibleSeries.sofr && <Line type="monotone" dataKey="sofr" name={labelSOFR} stroke="#ea580c" strokeWidth={2} dot={false} connectNulls yAxisId="right" />}
+                        {visibleSeries.effr && <Line type="monotone" dataKey="effr" name={labelEFFR} stroke="#0d9488" strokeWidth={2} dot={false} connectNulls yAxisId="right" />}
                       </>
                     ) : (
                       <Line type="monotone" dataKey="value" name={t('chart.tooltipValue')} stroke="#2563eb" strokeWidth={2} dot={false} />
