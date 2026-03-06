@@ -246,10 +246,12 @@ def _save_records(records):
 
 async def _stream_us_history_events(limit: int, start_date: str):
     """Async-Generator: NDJSON-Zeilen mit Fortschritt (progress) und abschließend done."""
+    from datetime import datetime
     import USA_Kontostand as api
     loop = asyncio.get_event_loop()
 
     def _line(obj):
+        obj = {**obj, "ts": datetime.now().strftime("%H:%M:%S")}
         return json.dumps(obj, ensure_ascii=False) + "\n"
 
     yield _line({"type": "progress", "message": "US-Historie wird geladen (Treasury + FRED)."})
@@ -283,7 +285,7 @@ async def _stream_us_history_events(limit: int, start_date: str):
         })
     yield _line({"type": "progress", "message": f"US-Daten fertig: {total_saved_us} neue, {len(records) - total_saved_us} bereits in DB."})
 
-    yield _line({"type": "progress", "message": "Kurse (S&P 500, BTC) werden geladen."})
+    yield _line({"type": "progress", "message": "Kurse (S&P 500, DJIA, NASDAQ, BTC, ETH, LTC) werden geladen."})
     try:
         markets_records = await loop.run_in_executor(
             None,

@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import requests
+from datetime import datetime, timedelta
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +60,17 @@ def _get_fred_latest(series_id: str, api_key: str):
             return None
         return {"date": date, "value": value}
     except Exception:
+        return None
+
+
+def _day_after(date_str: str):
+    """Nächstes Datum nach date_str (YYYY-MM-DD). Für inkrementellen Abruf."""
+    if not date_str or len(date_str) < 10:
+        return None
+    try:
+        d = datetime.strptime(date_str[:10], "%Y-%m-%d")
+        return (d + timedelta(days=1)).strftime("%Y-%m-%d")
+    except (ValueError, TypeError):
         return None
 
 
@@ -197,13 +209,19 @@ def get_us_account_balance_pro():
 def get_us_historical(limit_treasury: int = 100, limit_fred: int = 100, start_date: str = None):
     """
     Holt historische Daten für TGA (Treasury), WDTGAL, RRPONTSYD, WRESBAL, SOFR und EFFR (FRED).
-    start_date z. B. '2020-01-01' – dann werden Daten ab diesem Datum geholt.
-    Liefert eine Liste von Datensätzen zum Speichern (country, date, value, unit, label).
+    Lädt nur fehlende Daten (nach dem neuesten in der DB), um Doppel-Downloads zu vermeiden.
     """
     records = []
     start_date = (start_date or "2020-01-01").strip() or None
+    try:
+        import persist
+        max_dates_us = persist.get_max_dates_by_country("us")
+    except Exception:
+        max_dates_us = {}
+
     url = "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v1/accounting/dts/operating_cash_balance"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) IT-Expert-Query/1.0"}
+    max_date_tga = max_dates_us.get("TGA Closing Balance")
 
     def _num(val):
         if val is None or (isinstance(val, str) and val.lower() == "null"):
@@ -231,6 +249,8 @@ def get_us_historical(limit_treasury: int = 100, limit_fred: int = 100, start_da
                 date = entry.get("record_date")
                 if date:
                     oldest_in_page = date if oldest_in_page is None else min(oldest_in_page, date)
+                if max_date_tga and date and date <= max_date_tga:
+                    continue
                 if start_date and date and date < start_date:
                     continue
                 raw = _num(entry.get("close_today_bal")) or _num(entry.get("open_today_bal"))
@@ -242,6 +262,8 @@ def get_us_historical(limit_treasury: int = 100, limit_fred: int = 100, start_da
                         "unit": "Mrd. USD",
                         "label": "TGA Closing Balance",
                     })
+            if max_date_tga and oldest_in_page is not None and oldest_in_page <= max_date_tga:
+                break
             if start_date and oldest_in_page is not None and oldest_in_page < start_date:
                 break
             if len(data_list) < page_size:
@@ -252,7 +274,6 @@ def get_us_historical(limit_treasury: int = 100, limit_fred: int = 100, start_da
 
     fred_key = os.environ.get("FRED_API_KEY", "").strip()
     if fred_key:
-        limit_fred_actual = max(limit_fred, 2500) if start_date else limit_fred
         for series_id, label, unit in [
             ("WDTGAL", "WDTGAL (TGA Wed)", "Mrd. USD"),
             ("RRPONTSYD", "RRPONTSYD (Overnight RRP)", "Mrd. USD"),
@@ -260,15 +281,17 @@ def get_us_historical(limit_treasury: int = 100, limit_fred: int = 100, start_da
             ("SOFR", "SOFR", "%"),
             ("EFFR", "EFFR", "%"),
         ]:
+            obs_start = (_day_after(max_dates_us.get(label)) or start_date) if max_dates_us.get(label) else start_date
+            limit_this = 500 if max_dates_us.get(label) else max(limit_fred, 2500) if start_date else limit_fred
             obs = _get_fred_observations(
-                series_id, fred_key, limit=limit_fred_actual,
-                observation_start=start_date,
+                series_id, fred_key, limit=limit_this,
+                observation_start=obs_start,
             )
             # Fallback: FRED kann bei Serien-ID Groß-/Kleinschreibung sensibel sein
             if not obs and series_id == "WRESBAL":
                 obs = _get_fred_observations(
-                    "wresbal", fred_key, limit=limit_fred_actual,
-                    observation_start=start_date,
+                    "wresbal", fred_key, limit=limit_this,
+                    observation_start=obs_start,
                 )
             if series_id == "WRESBAL" and not obs:
                 log.warning("FRED WRESBAL: keine Daten (series_id=WRESBAL und wresbal). Bitte FRED_API_KEY prüfen.")
@@ -287,22 +310,33 @@ def get_us_historical(limit_treasury: int = 100, limit_fred: int = 100, start_da
 
 def get_markets_historical(limit_fred: int = 500, start_date: str = None):
     """
-    Holt historische Kursdaten von FRED: S&P 500 (SP500) und Bitcoin (CBBTCUSD).
-    Speicherung unter country="markets" für die Kurse-Ansicht.
+    Holt historische Kursdaten von FRED: S&P 500, DJIA, NASDAQ, BTC, ETH, LTC.
+    Lädt nur Daten nach dem neuesten in der DB (inkrementell), um Doppel-Downloads zu vermeiden.
     """
     records = []
     start_date = (start_date or "2020-01-01").strip() or None
+    try:
+        import persist
+        max_dates_markets = persist.get_max_dates_by_country("markets")
+    except Exception:
+        max_dates_markets = {}
     fred_key = os.environ.get("FRED_API_KEY", "").strip()
     if not fred_key:
         return records
-    limit_actual = max(limit_fred, 2500) if start_date else limit_fred
+    limit_full = max(limit_fred, 2500) if start_date else limit_fred
     for series_id, label, unit in [
         ("SP500", "S&P 500", "Index"),
+        ("DJIA", "DJIA", "Index"),
+        ("NASDAQCOM", "NASDAQ", "Index"),
         ("CBBTCUSD", "BTC", "USD"),
+        ("CBETHUSD", "ETH", "USD"),
+        ("CBLTCUSD", "LTC", "USD"),
     ]:
+        obs_start = (_day_after(max_dates_markets.get(label)) or start_date) if max_dates_markets.get(label) else start_date
+        limit_this = 500 if max_dates_markets.get(label) else limit_full
         obs = _get_fred_observations(
-            series_id, fred_key, limit=limit_actual,
-            observation_start=start_date,
+            series_id, fred_key, limit=limit_this,
+            observation_start=obs_start,
         )
         for o in obs:
             records.append({

@@ -327,7 +327,11 @@ export default function App() {
   const labelSOFR = t('labels.sofr')
   const labelEFFR = t('labels.effr')
   const labelSP500 = t('labels.sp500')
+  const labelDJIA = t('labels.djia')
+  const labelNASDAQ = t('labels.nasdaq')
   const labelBTC = t('labels.btc')
+  const labelETH = t('labels.eth')
+  const labelLTC = t('labels.ltc')
 
   const chartData = (() => {
     if (isUS && history.some((r) => r.label)) {
@@ -376,26 +380,41 @@ export default function App() {
   const yAxisUnit = isUS ? formatUnit('Mrd. USD') : formatUnit(history[0]?.unit) || history[0]?.unit || ''
 
   const [visibleSeries, setVisibleSeries] = useState({ tga: true, wdtgal: true, rrp: true, wresbal: true, sofr: true, effr: true })
-  const [visibleKurseSeries, setVisibleKurseSeries] = useState({ sp500: true, btc: true })
+  const [visibleKurseSeries, setVisibleKurseSeries] = useState({ sp500: true, djia: true, nasdaq: true, btc: true, eth: true, ltc: true })
   const toggleSeries = (key) => setVisibleSeries((s) => ({ ...s, [key]: !s[key] }))
   const toggleKurseSeries = (key) => setVisibleKurseSeries((s) => ({ ...s, [key]: !s[key] }))
 
   const kurseChartData = (() => {
     const byLabel = (lbl) => marketsHistory.filter((r) => r.label === lbl).map((r) => ({ date: r.date, value: Number(r.value) }))
     const sp500 = byLabel(labelSP500)
+    const djia = byLabel(labelDJIA)
+    const nasdaq = byLabel(labelNASDAQ)
     const btc = byLabel(labelBTC)
-    const allDates = [...new Set([...sp500.map((x) => x.date), ...btc.map((x) => x.date)])].filter((d) => d >= '2020-01-01').sort()
+    const eth = byLabel(labelETH)
+    const ltc = byLabel(labelLTC)
+    const allDates = [...new Set([
+      ...sp500.map((x) => x.date), ...djia.map((x) => x.date), ...nasdaq.map((x) => x.date),
+      ...btc.map((x) => x.date), ...eth.map((x) => x.date), ...ltc.map((x) => x.date),
+    ])].filter((d) => d >= '2020-01-01').sort()
     return allDates.map((date) => {
       const s = sp500.find((x) => x.date === date)
+      const d = djia.find((x) => x.date === date)
+      const n = nasdaq.find((x) => x.date === date)
       const b = btc.find((x) => x.date === date)
+      const e = eth.find((x) => x.date === date)
+      const l = ltc.find((x) => x.date === date)
       return {
         date,
         sp500: s != null ? s.value : null,
+        djia: d != null ? d.value : null,
+        nasdaq: n != null ? n.value : null,
         btc: b != null ? b.value : null,
+        eth: e != null ? e.value : null,
+        ltc: l != null ? l.value : null,
       }
     })
   })()
-  const hasKurseData = kurseChartData.length > 0 && kurseChartData.some((d) => d.sp500 != null || d.btc != null)
+  const hasKurseData = kurseChartData.length > 0 && kurseChartData.some((d) => d.sp500 != null || d.djia != null || d.nasdaq != null || d.btc != null || d.eth != null || d.ltc != null)
 
   const nKurse = kurseChartData.length
   const [kurseRangeStart, setKurseRangeStart] = useState(0)
@@ -477,6 +496,20 @@ export default function App() {
           >
             {t('menu.statistik')}
           </button>
+          <button
+            type="button"
+            onClick={() => setView('news')}
+            style={{
+              padding: '0.35rem 0.75rem',
+              border: view === 'news' ? '2px solid #2563eb' : '1px solid #ccc',
+              borderRadius: 6,
+              background: view === 'news' ? '#eff6ff' : '#fff',
+              cursor: 'pointer',
+              fontSize: '0.95rem',
+            }}
+          >
+            {t('menu.news')}
+          </button>
         </nav>
         <div style={{ marginTop: '0.5rem', fontSize: '0.9rem' }}>
           <button
@@ -540,6 +573,7 @@ export default function App() {
                 {kurseFetchingHistory && historyProgressLog.length === 0 && <li key="wait">{t('historyProgress.waiting')}</li>}
                 {historyProgressLog.map((entry, i) => (
                   <li key={i} style={{ color: entry.type === 'error' ? '#b91c1c' : entry.type === 'done' ? '#15803d' : undefined, marginBottom: '0.25rem' }}>
+                    {entry.ts && <span style={{ fontVariantNumeric: 'tabular-nums', marginRight: '0.5rem', color: '#64748b' }}>[{entry.ts}]</span>}
                     {entry.message}
                     {entry.type === 'done' && entry.saved != null && ` (${entry.saved})`}
                   </li>
@@ -561,9 +595,29 @@ export default function App() {
                     <span>{labelSP500}</span>
                   </label>
                   <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={visibleKurseSeries.djia} onChange={() => toggleKurseSeries('djia')} />
+                    <span style={{ width: 10, height: 10, backgroundColor: '#059669' }} />
+                    <span>{labelDJIA}</span>
+                  </label>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={visibleKurseSeries.nasdaq} onChange={() => toggleKurseSeries('nasdaq')} />
+                    <span style={{ width: 10, height: 10, backgroundColor: '#dc2626' }} />
+                    <span>{labelNASDAQ}</span>
+                  </label>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                     <input type="checkbox" checked={visibleKurseSeries.btc} onChange={() => toggleKurseSeries('btc')} />
                     <span style={{ width: 10, height: 10, backgroundColor: '#f59e0b' }} />
                     <span>{labelBTC}</span>
+                  </label>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={visibleKurseSeries.eth} onChange={() => toggleKurseSeries('eth')} />
+                    <span style={{ width: 10, height: 10, backgroundColor: '#6366f1' }} />
+                    <span>{labelETH}</span>
+                  </label>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={visibleKurseSeries.ltc} onChange={() => toggleKurseSeries('ltc')} />
+                    <span style={{ width: 10, height: 10, backgroundColor: '#14b8a6' }} />
+                    <span>{labelLTC}</span>
                   </label>
                 </div>
               )}
@@ -577,21 +631,25 @@ export default function App() {
                         yAxisId="left"
                         tick={{ fontSize: 12 }}
                         tickFormatter={(v) => v.toLocaleString(locale, { maximumFractionDigits: 0 })}
-                        label={{ value: 'S&P 500', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fontSize: 12 } }}
+                        label={{ value: t('kurse.axisIndices'), angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fontSize: 12 } }}
                       />
                       <YAxis
                         yAxisId="right"
                         orientation="right"
                         tick={{ fontSize: 12 }}
                         tickFormatter={(v) => v.toLocaleString(locale, { maximumFractionDigits: 0 })}
-                        label={{ value: 'BTC (USD)', angle: 90, position: 'insideRight', style: { textAnchor: 'middle', fontSize: 12 } }}
+                        label={{ value: 'Krypto (USD)', angle: 90, position: 'insideRight', style: { textAnchor: 'middle', fontSize: 12 } }}
                       />
                       <Tooltip
                         formatter={(value) => [value != null ? Number(value).toLocaleString(locale, { maximumFractionDigits: 2 }) : '–', t('chart.tooltipValue')]}
                         labelFormatter={(label) => `${t('chart.tooltipDate')}: ${formatDate(label)}`}
                       />
                       {visibleKurseSeries.sp500 && <Line type="monotone" dataKey="sp500" name={labelSP500} stroke="#2563eb" strokeWidth={2} dot={false} connectNulls yAxisId="left" />}
+                      {visibleKurseSeries.djia && <Line type="monotone" dataKey="djia" name={labelDJIA} stroke="#059669" strokeWidth={2} dot={false} connectNulls yAxisId="left" />}
+                      {visibleKurseSeries.nasdaq && <Line type="monotone" dataKey="nasdaq" name={labelNASDAQ} stroke="#dc2626" strokeWidth={2} dot={false} connectNulls yAxisId="left" />}
                       {visibleKurseSeries.btc && <Line type="monotone" dataKey="btc" name={labelBTC} stroke="#f59e0b" strokeWidth={2} dot={false} connectNulls yAxisId="right" />}
+                      {visibleKurseSeries.eth && <Line type="monotone" dataKey="eth" name={labelETH} stroke="#6366f1" strokeWidth={2} dot={false} connectNulls yAxisId="right" />}
+                      {visibleKurseSeries.ltc && <Line type="monotone" dataKey="ltc" name={labelLTC} stroke="#14b8a6" strokeWidth={2} dot={false} connectNulls yAxisId="right" />}
                     </LineChart>
                   </ResponsiveContainer>
                   {nKurse > 1 && (
@@ -747,6 +805,13 @@ export default function App() {
         ) : null}
       </section>
         </>
+      ) : view === 'news' ? (
+        <>
+      <section style={{ background: '#fff', padding: '1rem', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', marginBottom: '1.5rem' }}>
+        <h2 style={{ margin: '0 0 1rem', fontSize: '1.1rem' }}>{t('news.title')}</h2>
+        <p style={{ color: '#64748b', margin: 0 }}>{t('news.placeholder')}</p>
+      </section>
+        </>
       ) : (
         <>
       {error && (
@@ -836,6 +901,7 @@ export default function App() {
             {fetchingHistory && historyProgressLog.length === 0 && <li key="wait">{t('historyProgress.waiting')}</li>}
             {historyProgressLog.map((entry, i) => (
               <li key={i} style={{ color: entry.type === 'error' ? '#b91c1c' : entry.type === 'done' ? '#15803d' : undefined, marginBottom: '0.25rem' }}>
+                {entry.ts && <span style={{ fontVariantNumeric: 'tabular-nums', marginRight: '0.5rem', color: '#64748b' }}>[{entry.ts}]</span>}
                 {entry.message}
                 {entry.type === 'done' && entry.saved != null && ` (${entry.saved})`}
               </li>

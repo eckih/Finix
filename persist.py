@@ -176,6 +176,29 @@ def load_history(country: str = None, limit: int = None, min_date: str = None, n
         conn.close()
 
 
+def get_max_dates_by_country(country: str):
+    """
+    Pro Label das neueste vorhandene Datum (YYYY-MM-DD).
+    Für inkrementellen Abruf: nur Daten nach diesem Datum nachladen.
+
+    :param country: z. B. 'us', 'markets'
+    :return: Dict label -> max_date (z. B. {"S&P 500": "2024-03-01", "BTC": "2024-03-05"})
+    """
+    if not DB_PATH.exists():
+        return {}
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT label, MAX(date) FROM finance_records
+               WHERE LOWER(country) = ? AND date IS NOT NULL AND date != ''
+               GROUP BY COALESCE(label, '')""",
+            (country.lower(),),
+        ).fetchall()
+        return {row[0] or "": row[1] for row in rows if row[1]}
+    finally:
+        conn.close()
+
+
 def get_db_stats():
     """
     Zusammenfassung der Datenbank: Größe, Anzahl Einträge, Verteilung nach Land/Label, Datumsbereich.

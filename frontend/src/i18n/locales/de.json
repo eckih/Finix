@@ -6,7 +6,12 @@
   "menu": {
     "finanzen": "Staatsfinanzen",
     "kurse": "Kurse",
-    "statistik": "Statistik"
+    "statistik": "Statistik",
+    "news": "News"
+  },
+  "news": {
+    "title": "News",
+    "placeholder": "Hier können später Finanz- und Wirtschaftsnews angezeigt werden."
   },
   "statistik": {
     "title": "Datenbank-Statistik",
@@ -24,6 +29,7 @@
   },
   "kurse": {
     "title": "Aktien & Krypto",
+    "axisIndices": "Indizes",
     "noData": "Noch keine Kurse. Klicke auf „Historie laden (USA)“ bei Staatsfinanzen oder unten auf „Historie laden“.",
     "loadHistory": "Historie laden",
     "loadHistoryBusy": "Wird geladen…"
@@ -77,7 +83,11 @@
     "sofr": "SOFR",
     "effr": "EFFR",
     "sp500": "S&P 500",
-    "btc": "BTC"
+    "djia": "DJIA",
+    "nasdaq": "NASDAQ",
+    "btc": "BTC",
+    "eth": "ETH",
+    "ltc": "LTC"
   },
   "legend": {
     "sourceFred": "Quelle: FRED – {{label}}"

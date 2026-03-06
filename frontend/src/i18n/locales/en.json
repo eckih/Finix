@@ -6,7 +6,12 @@
   "menu": {
     "finanzen": "Public finances",
     "kurse": "Prices",
-    "statistik": "Statistics"
+    "statistik": "Statistics",
+    "news": "News"
+  },
+  "news": {
+    "title": "News",
+    "placeholder": "Financial and economic news can be displayed here later."
   },
   "statistik": {
     "title": "Database statistics",
@@ -24,6 +29,7 @@
   },
   "kurse": {
     "title": "Stocks & crypto",
+    "axisIndices": "Indices",
     "noData": "No price data yet. Click \"Load history (USA)\" on Public finances or \"Load history\" below.",
     "loadHistory": "Load history",
     "loadHistoryBusy": "Loading…"
@@ -77,7 +83,11 @@
     "sofr": "SOFR",
     "effr": "EFFR",
     "sp500": "S&P 500",
-    "btc": "BTC"
+    "djia": "DJIA",
+    "nasdaq": "NASDAQ",
+    "btc": "BTC",
+    "eth": "ETH",
+    "ltc": "LTC"
   },
   "legend": {
     "sourceFred": "Source: FRED – {{label}}"
