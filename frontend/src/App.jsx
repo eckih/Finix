@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   LineChart,
   Line,
@@ -12,6 +13,15 @@ import {
 
 const API = '/api'
 
+// API-Einheiten (z. B. aus DB) → Übersetzungsschlüssel für units.*
+const UNIT_TO_I18N_KEY = {
+  'Mrd. USD': 'mrdUsd',
+  'Mrd. EUR': 'mrdEur',
+  'Mrd. CAD': 'mrdCad',
+  'Mrd. CHF': 'mrdChf',
+  'Mrd. MXN': 'mrdMxn',
+}
+
 // FRED-Quellen: Legenden-Einträge verlinken
 const FRED_LEGEND_LINKS = {
   'WDTGAL (TGA Wed)': 'https://fred.stlouisfed.org/series/WDTGAL',
@@ -21,6 +31,7 @@ const FRED_LEGEND_LINKS = {
 }
 
 function LegendWithLinks({ payload }) {
+  const { t } = useTranslation()
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem 1.25rem', justifyContent: 'center', marginTop: '0.5rem' }}>
       {payload?.map((entry, i) => {
@@ -34,7 +45,7 @@ function LegendWithLinks({ payload }) {
         return (
           <span key={i} style={{ fontSize: 12 }}>
             {url ? (
-              <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }} title={`Quelle: FRED – ${entry.value}`}>
+              <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }} title={t('legend.sourceFred', { label: entry.value })}>
                 {content}
               </a>
             ) : (
@@ -48,6 +59,7 @@ function LegendWithLinks({ payload }) {
 }
 
 export default function App() {
+  const { t, i18n } = useTranslation()
   const [countries, setCountries] = useState([])
   const [selectedCountry, setSelectedCountry] = useState('us')
   const [history, setHistory] = useState([])
@@ -55,18 +67,31 @@ export default function App() {
   const [fetching, setFetching] = useState(false)
   const [fetchingHistory, setFetchingHistory] = useState(false)
   const [error, setError] = useState(null)
+  const locale = i18n.language && i18n.language.startsWith('en') ? 'en-US' : 'de-DE'
+  const formatUnit = (unit) => {
+    if (!unit || typeof unit !== 'string') return ''
+    const u = unit.trim()
+    const key = UNIT_TO_I18N_KEY[u]
+    if (key) return t(`units.${key}`)
+    // Fallback: "Mrd. XXX" → "Billion XXX" (EN) bzw. unverändert (DE)
+    if (u.startsWith('Mrd.')) {
+      return `${t('units.billion')} ${u.replace(/^Mrd\.\s*/, '').trim()}`.trim()
+    }
+    return unit
+  }
 
   const loadCountries = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/countries`)
-      if (!res.ok) throw new Error('Länder konnten nicht geladen werden')
+      const lang = i18n.language && i18n.language.startsWith('en') ? 'en' : 'de'
+      const res = await fetch(`${API}/countries?lang=${lang}`)
+      if (!res.ok) throw new Error(t('messages.errorCountries'))
       const data = await res.json()
       setCountries(data.countries || [])
       if (data.countries?.length && !selectedCountry) setSelectedCountry(data.countries[0].id)
     } catch (e) {
       setError(e.message)
     }
-  }, [])
+  }, [t, i18n.language])
 
   const loadHistory = useCallback(async (country) => {
     if (!country) return
@@ -74,7 +99,7 @@ export default function App() {
     setError(null)
     try {
       const res = await fetch(`${API}/history?country=${encodeURIComponent(country)}&limit=100`)
-      if (!res.ok) throw new Error('Verlauf konnte nicht geladen werden')
+      if (!res.ok) throw new Error(t('messages.errorHistory'))
       const data = await res.json()
       setHistory(data.data || [])
     } catch (e) {
@@ -83,7 +108,7 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     loadCountries()
@@ -134,10 +159,10 @@ export default function App() {
   }
 
   const isUS = selectedCountry === 'us'
-  const labelTGA = 'TGA Closing Balance'
-  const labelWDTGAL = 'WDTGAL (TGA Wed)'
-  const labelRRP = 'RRPONTSYD (Overnight RRP)'
-  const labelWRESBAL = 'WRESBAL (Reserve Balances)'
+  const labelTGA = t('labels.tga')
+  const labelWDTGAL = t('labels.wdtgal')
+  const labelRRP = t('labels.rrp')
+  const labelWRESBAL = t('labels.wresbal')
 
   const chartData = (() => {
     if (isUS && history.some((r) => r.label)) {
@@ -169,12 +194,12 @@ export default function App() {
       .map((r) => ({
         date: r.date,
         value: Number(r.value),
-        name: `${r.date} – ${Number(r.value).toLocaleString('de-DE', { maximumFractionDigits: 1 })} ${r.unit || ''}`,
+        name: `${r.date} – ${Number(r.value).toLocaleString(locale, { maximumFractionDigits: 1 })} ${formatUnit(r.unit) || r.unit || ''}`,
       }))
   })()
 
   const hasMultiSeries = isUS && chartData.length > 0 && chartData.some((d) => d.tga != null || d.wdtgal != null || d.rrp != null || d.wresbal != null)
-  const yAxisUnit = isUS ? 'Mrd. USD' : (history[0]?.unit || '')
+  const yAxisUnit = isUS ? formatUnit('Mrd. USD') : formatUnit(history[0]?.unit) || history[0]?.unit || ''
 
   const [visibleSeries, setVisibleSeries] = useState({ tga: true, wdtgal: true, rrp: true, wresbal: true })
   const toggleSeries = (key) => setVisibleSeries((s) => ({ ...s, [key]: !s[key] }))
@@ -197,15 +222,44 @@ export default function App() {
   return (
     <div className="app">
       <header style={{ marginBottom: '1.5rem' }}>
-        <h1 style={{ margin: 0, fontSize: '1.75rem' }}>Finix</h1>
+        <h1 style={{ margin: 0, fontSize: '1.75rem' }}>{t('app.title')}</h1>
         <p style={{ margin: '0.25rem 0 0', color: '#555' }}>
-          Staatsfinanzen im Überblick – offizielle Daten (TGA, Kreditbestand, Nettofinanzierungssaldo)
+          {t('app.subtitle')}
         </p>
+        <div style={{ marginTop: '0.5rem', fontSize: '0.9rem' }}>
+          <button
+            type="button"
+            onClick={() => i18n.changeLanguage('de')}
+            style={{
+              marginRight: 8,
+              padding: '0.2rem 0.5rem',
+              border: i18n.language === 'de' ? '2px solid #2563eb' : '1px solid #ccc',
+              borderRadius: 4,
+              background: i18n.language === 'de' ? '#eff6ff' : '#fff',
+              cursor: 'pointer',
+            }}
+          >
+            DE
+          </button>
+          <button
+            type="button"
+            onClick={() => i18n.changeLanguage('en')}
+            style={{
+              padding: '0.2rem 0.5rem',
+              border: i18n.language === 'en' ? '2px solid #2563eb' : '1px solid #ccc',
+              borderRadius: 4,
+              background: i18n.language === 'en' ? '#eff6ff' : '#fff',
+              cursor: 'pointer',
+            }}
+          >
+            EN
+          </button>
+        </div>
       </header>
 
       <section className="controls" style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
         <label>
-          Land:{' '}
+          {t('controls.country')}:{' '}
           <select
             value={selectedCountry}
             onChange={(e) => setSelectedCountry(e.target.value)}
@@ -231,7 +285,7 @@ export default function App() {
             cursor: fetching ? 'not-allowed' : 'pointer',
           }}
         >
-          {fetching ? 'Abfrage läuft…' : 'Jetzt abfragen & speichern'}
+          {fetching ? t('controls.fetching') : t('controls.fetch')}
         </button>
         {selectedCountry === 'us' && (
           <button
@@ -246,9 +300,9 @@ export default function App() {
               borderRadius: '6px',
               cursor: fetchingHistory ? 'not-allowed' : 'pointer',
             }}
-            title="TGA, WDTGAL, RRPONTSYD und WRESBAL – bis zu 500 Einträge pro Reihe von Treasury & FRED"
+            title={t('controls.loadHistoryTitle')}
           >
-            {fetchingHistory ? 'Historie wird geladen…' : 'Historie laden (USA)'}
+            {fetchingHistory ? t('controls.loadHistoryBusy') : t('controls.loadHistory')}
           </button>
         )}
       </section>
@@ -260,19 +314,19 @@ export default function App() {
       )}
       {lastHistoryByLabel && Object.keys(lastHistoryByLabel).length > 0 && (
         <div style={{ padding: '0.75rem', background: '#f0fdf4', color: '#166534', borderRadius: '6px', marginBottom: '1rem', fontSize: '0.9rem' }}>
-          Historie geladen – pro Indikator: {Object.entries(lastHistoryByLabel).map(([lbl, n]) => `${lbl}: ${n}`).join(', ')}
+          {t('messages.historyLoaded')} {Object.entries(lastHistoryByLabel).map(([lbl, n]) => `${lbl}: ${n}`).join(', ')}
         </div>
       )}
 
       {loading ? (
-        <p>Lade Verlauf…</p>
+        <p>{t('messages.loading')}</p>
       ) : (
         <>
           <section className="chart" style={{ background: '#fff', padding: '1rem', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', marginBottom: '1.5rem' }}>
-            <h2 style={{ margin: '0 0 1rem', fontSize: '1.1rem' }}>Verlauf ({selectedCountry.toUpperCase()})</h2>
+            <h2 style={{ margin: '0 0 1rem', fontSize: '1.1rem' }}>{t('chart.history')} ({selectedCountry.toUpperCase()})</h2>
             {hasMultiSeries && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center', marginBottom: '0.75rem', fontSize: '0.9rem' }}>
-                <span style={{ color: '#555', marginRight: '0.25rem' }}>Anzeigen:</span>
+                <span style={{ color: '#555', marginRight: '0.25rem' }}>{t('chart.show')}:</span>
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                   <input type="checkbox" checked={visibleSeries.tga} onChange={() => toggleSeries('tga')} />
                   <span style={{ width: 10, height: 10, backgroundColor: '#2563eb' }} />
@@ -303,12 +357,12 @@ export default function App() {
                     <XAxis dataKey="date" tick={{ fontSize: 12 }} />
                     <YAxis
                       tick={{ fontSize: 12 }}
-                      tickFormatter={(v) => v.toLocaleString('de-DE', { maximumFractionDigits: 0 })}
+                      tickFormatter={(v) => v.toLocaleString(locale, { maximumFractionDigits: 0 })}
                       label={yAxisUnit ? { value: yAxisUnit, angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fontSize: 12 } } : undefined}
                     />
                     <Tooltip
-                      formatter={(value) => [value != null ? Number(value).toLocaleString('de-DE', { maximumFractionDigits: 2 }) : '–', 'Wert']}
-                      labelFormatter={(label) => `Datum: ${label}`}
+                      formatter={(value) => [value != null ? Number(value).toLocaleString(locale, { maximumFractionDigits: 2 }) : '–', t('chart.tooltipValue')]}
+                      labelFormatter={(label) => `${t('chart.tooltipDate')}: ${label}`}
                     />
                     <Legend content={<LegendWithLinks />} />
                     {hasMultiSeries ? (
@@ -319,16 +373,16 @@ export default function App() {
                         {visibleSeries.wresbal && <Line type="monotone" dataKey="wresbal" name={labelWRESBAL} stroke="#7c3aed" strokeWidth={2} dot={false} connectNulls />}
                       </>
                     ) : (
-                      <Line type="monotone" dataKey="value" name="Wert" stroke="#2563eb" strokeWidth={2} dot={false} />
+                      <Line type="monotone" dataKey="value" name={t('chart.tooltipValue')} stroke="#2563eb" strokeWidth={2} dot={false} />
                     )}
                   </LineChart>
                 </ResponsiveContainer>
                 {n > 1 && (
                   <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid #eee' }}>
-                    <div style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.5rem' }}>Zeitraum (Slider):</div>
+                    <div style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.5rem' }}>{t('chart.period')}</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '1rem' }}>
                       <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: '160px' }}>
-                        <span>Von:</span>
+                        <span>{t('chart.from')}:</span>
                         <input
                           type="range"
                           min={0}
@@ -344,7 +398,7 @@ export default function App() {
                         <span style={{ fontVariantNumeric: 'tabular-nums', width: 95 }}>{chartData[lo]?.date ?? '–'}</span>
                       </label>
                       <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: '160px' }}>
-                        <span>Bis:</span>
+                        <span>{t('chart.to')}:</span>
                         <input
                           type="range"
                           min={0}
@@ -364,28 +418,28 @@ export default function App() {
                         onClick={() => { setRangeStart(0); setRangeEnd(n - 1) }}
                         style={{ padding: '0.35rem 0.6rem', fontSize: '0.85rem', background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: 4, cursor: 'pointer' }}
                       >
-                        Ganzer Zeitraum
+                        {t('chart.fullRange')}
                       </button>
                     </div>
                   </div>
                 )}
               </>
             ) : (
-              <p style={{ color: '#666' }}>Noch keine Verlaufsdaten. Klicke auf „Jetzt abfragen & speichern“.</p>
+              <p style={{ color: '#666' }}>{t('chart.noData')}</p>
             )}
           </section>
 
           <section className="table" style={{ background: '#fff', padding: '1rem', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
-            <h2 style={{ margin: '0 0 1rem', fontSize: '1.1rem' }}>Letzte Einträge</h2>
+            <h2 style={{ margin: '0 0 1rem', fontSize: '1.1rem' }}>{t('table.lastEntries')}</h2>
             {history.length > 0 ? (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.95rem' }}>
                 <thead>
                   <tr style={{ borderBottom: '2px solid #eee', textAlign: 'left' }}>
-                    <th style={{ padding: '0.5rem' }}>Datum</th>
-                    {isUS && <th style={{ padding: '0.5rem' }}>Indikator</th>}
-                    <th style={{ padding: '0.5rem' }}>Wert</th>
-                    <th style={{ padding: '0.5rem' }}>Einheit</th>
-                    <th style={{ padding: '0.5rem' }}>Abgerufen</th>
+                    <th style={{ padding: '0.5rem' }}>{t('table.date')}</th>
+                    {isUS && <th style={{ padding: '0.5rem' }}>{t('table.indicator')}</th>}
+                    <th style={{ padding: '0.5rem' }}>{t('table.value')}</th>
+                    <th style={{ padding: '0.5rem' }}>{t('table.unit')}</th>
+                    <th style={{ padding: '0.5rem' }}>{t('table.fetchedAt')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -393,15 +447,15 @@ export default function App() {
                     <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
                       <td style={{ padding: '0.5rem' }}>{r.date}</td>
                       {isUS && <td style={{ padding: '0.5rem', color: '#555' }}>{r.label || '–'}</td>}
-                      <td style={{ padding: '0.5rem' }}>{Number(r.value).toLocaleString('de-DE', { maximumFractionDigits: 2 })}</td>
-                      <td style={{ padding: '0.5rem' }}>{r.unit}</td>
-                      <td style={{ padding: '0.5rem', color: '#666' }}>{r.fetched_at ? new Date(r.fetched_at).toLocaleString('de-DE') : '–'}</td>
+                      <td style={{ padding: '0.5rem' }}>{Number(r.value).toLocaleString(locale, { maximumFractionDigits: 2 })}</td>
+                      <td style={{ padding: '0.5rem' }}>{formatUnit(r.unit) || r.unit}</td>
+                      <td style={{ padding: '0.5rem', color: '#666' }}>{r.fetched_at ? new Date(r.fetched_at).toLocaleString(locale) : '–'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             ) : (
-              <p style={{ color: '#666' }}>Keine Einträge für dieses Land.</p>
+              <p style={{ color: '#666' }}>{t('table.noEntries')}</p>
             )}
           </section>
         </>

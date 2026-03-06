@@ -1,0 +1,57 @@
+{
+  "app": {
+    "title": "Finix",
+    "subtitle": "Public finances at a glance – official data (TGA, debt, net financing balance)"
+  },
+  "controls": {
+    "country": "Country",
+    "fetch": "Fetch & save now",
+    "fetching": "Fetching…",
+    "loadHistory": "Load history (USA)",
+    "loadHistoryBusy": "Loading history…",
+    "loadHistoryTitle": "TGA, WDTGAL, RRPONTSYD and WRESBAL – up to 500 entries per series from Treasury & FRED"
+  },
+  "chart": {
+    "history": "History",
+    "show": "Show",
+    "period": "Time range (slider)",
+    "from": "From",
+    "to": "To",
+    "fullRange": "Full range",
+    "noData": "No history data yet. Click \"Fetch & save now\".",
+    "tooltipValue": "Value",
+    "tooltipDate": "Date"
+  },
+  "table": {
+    "lastEntries": "Latest entries",
+    "date": "Date",
+    "indicator": "Indicator",
+    "value": "Value",
+    "unit": "Unit",
+    "fetchedAt": "Fetched",
+    "noEntries": "No entries for this country."
+  },
+  "messages": {
+    "historyLoaded": "History loaded – per indicator:",
+    "errorCountries": "Could not load countries",
+    "errorHistory": "Could not load history",
+    "loading": "Loading history…"
+  },
+  "labels": {
+    "tga": "TGA Closing Balance",
+    "wdtgal": "WDTGAL (TGA Wed)",
+    "rrp": "RRPONTSYD (Overnight RRP)",
+    "wresbal": "WRESBAL (Reserve Balances)"
+  },
+  "legend": {
+    "sourceFred": "Source: FRED – {{label}}"
+  },
+  "units": {
+    "billion": "Billion",
+    "mrdUsd": "Billion USD",
+    "mrdEur": "Billion EUR",
+    "mrdCad": "Billion CAD",
+    "mrdChf": "Billion CHF",
+    "mrdMxn": "Billion MXN"
+  }
+}

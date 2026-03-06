@@ -1,0 +1,57 @@
+{
+  "app": {
+    "title": "Finix",
+    "subtitle": "Staatsfinanzen im Überblick – offizielle Daten (TGA, Kreditbestand, Nettofinanzierungssaldo)"
+  },
+  "controls": {
+    "country": "Land",
+    "fetch": "Jetzt abfragen & speichern",
+    "fetching": "Abfrage läuft…",
+    "loadHistory": "Historie laden (USA)",
+    "loadHistoryBusy": "Historie wird geladen…",
+    "loadHistoryTitle": "TGA, WDTGAL, RRPONTSYD und WRESBAL – bis zu 500 Einträge pro Reihe von Treasury & FRED"
+  },
+  "chart": {
+    "history": "Verlauf",
+    "show": "Anzeigen",
+    "period": "Zeitraum (Slider)",
+    "from": "Von",
+    "to": "Bis",
+    "fullRange": "Ganzer Zeitraum",
+    "noData": "Noch keine Verlaufsdaten. Klicke auf „Jetzt abfragen & speichern“.",
+    "tooltipValue": "Wert",
+    "tooltipDate": "Datum"
+  },
+  "table": {
+    "lastEntries": "Letzte Einträge",
+    "date": "Datum",
+    "indicator": "Indikator",
+    "value": "Wert",
+    "unit": "Einheit",
+    "fetchedAt": "Abgerufen",
+    "noEntries": "Keine Einträge für dieses Land."
+  },
+  "messages": {
+    "historyLoaded": "Historie geladen – pro Indikator:",
+    "errorCountries": "Länder konnten nicht geladen werden",
+    "errorHistory": "Verlauf konnte nicht geladen werden",
+    "loading": "Lade Verlauf…"
+  },
+  "labels": {
+    "tga": "TGA Closing Balance",
+    "wdtgal": "WDTGAL (TGA Wed)",
+    "rrp": "RRPONTSYD (Overnight RRP)",
+    "wresbal": "WRESBAL (Reserve Balances)"
+  },
+  "legend": {
+    "sourceFred": "Quelle: FRED – {{label}}"
+  },
+  "units": {
+    "billion": "Mrd.",
+    "mrdUsd": "Mrd. USD",
+    "mrdEur": "Mrd. EUR",
+    "mrdCad": "Mrd. CAD",
+    "mrdChf": "Mrd. CHF",
+    "mrdMxn": "Mrd. MXN"
+  }
+}

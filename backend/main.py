@@ -34,21 +34,43 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Länder für Frontend (Code, Anzeigename)
-COUNTRIES = [
-    {"id": "us", "name": "USA (TGA)"},
-    {"id": "de", "name": "Deutschland"},
-    {"id": "at", "name": "Österreich"},
-    {"id": "ca", "name": "Kanada"},
-    {"id": "mx", "name": "Mexiko"},
-    {"id": "ch", "name": "Schweiz"},
-]
+# Länder für Frontend: mehrsprachige Anzeigenamen (id bleibt immer gleich)
+COUNTRIES_I18N = {
+    "de": [
+        {"id": "us", "name": "USA (TGA)"},
+        {"id": "de", "name": "Deutschland"},
+        {"id": "at", "name": "Österreich"},
+        {"id": "ca", "name": "Kanada"},
+        {"id": "mx", "name": "Mexiko"},
+        {"id": "ch", "name": "Schweiz"},
+    ],
+    "en": [
+        {"id": "us", "name": "USA (TGA)"},
+        {"id": "de", "name": "Germany"},
+        {"id": "at", "name": "Austria"},
+        {"id": "ca", "name": "Canada"},
+        {"id": "mx", "name": "Mexico"},
+        {"id": "ch", "name": "Switzerland"},
+    ],
+}
+SUPPORTED_LANGS = ("de", "en")
+DEFAULT_LANG = "de"
+
+
+def _get_countries(lang: str | None) -> list:
+    """Länderliste für Sprache lang (de/en). Fallback: de."""
+    if lang and lang.lower() in SUPPORTED_LANGS:
+        return COUNTRIES_I18N[lang.lower()]
+    return COUNTRIES_I18N[DEFAULT_LANG]
 
 
 @app.get("/api/countries")
-def get_countries():
-    """Liste der unterstützten Länder."""
-    return {"countries": COUNTRIES}
+def get_countries(
+    lang: str | None = Query(None, description="Sprache für Ländernamen: de, en"),
+):
+    """Liste der unterstützten Länder. Optional ?lang=en für englische Namen."""
+    countries = _get_countries(lang)
+    return {"countries": countries}
 
 
 @app.get("/api/history")
@@ -78,7 +100,7 @@ def get_history(
 def fetch_country(country: str):
     """Live-Abfrage für ein Land ausführen und in DB speichern."""
     country = country.lower()
-    if country not in [c["id"] for c in COUNTRIES]:
+    if country not in [c["id"] for c in COUNTRIES_I18N[DEFAULT_LANG]]:
         raise HTTPException(status_code=404, detail=f"Unbekanntes Land: {country}")
     import USA_Kontostand as api
     import persist
