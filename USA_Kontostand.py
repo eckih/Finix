@@ -1,6 +1,6 @@
 """
 US-, Deutschland-, Österreich-, Kanada-, Mexiko-, Schweiz- und Liechtenstein-Finanzdaten:
-- USA: TGA-Saldo (täglich) per API; optional FRED: WDTGAL (TGA Mittwoch), RRPONTSYD (Overnight Reverse Repos)
+- USA: TGA-Saldo (täglich) per API; optional FRED: WDTGAL (TGA Mittwoch), RRPONTSYD (Overnight Reverse Repos), WRESBAL (Reserve Balances)
 - DE: Kreditbestand Bund (monatlich) aus BMF-Datenportal
 - AT: Nettofinanzierungssaldo aus Monatsbericht (BMF Österreich)
 - CA: Daily Cash Balance (CRF an der Bank of Canada) per CSV
@@ -150,11 +150,12 @@ def get_us_account_balance_pro():
                 "unit": "Mrd. USD",
                 "label": "TGA Closing Balance",
             }
-            # Optional: FRED-Daten (WDTGAL = TGA Mittwoch, RRPONTSYD = Overnight Reverse Repos)
+            # Optional: FRED-Daten (WDTGAL = TGA Mittwoch, RRPONTSYD = Overnight Reverse Repos, WRESBAL = Reserve Balances)
             fred_key = os.environ.get("FRED_API_KEY", "").strip()
             if fred_key:
                 wdtgal = _get_fred_latest("WDTGAL", fred_key)  # Millions of USD
                 rrp = _get_fred_latest("RRPONTSYD", fred_key)  # Billions of USD
+                wresbal = _get_fred_latest("WRESBAL", fred_key)  # Millions of USD
                 if wdtgal:
                     result["fred_wdtgal_date"] = wdtgal["date"]
                     result["fred_wdtgal_value_mio"] = wdtgal["value"]
@@ -163,6 +164,10 @@ def get_us_account_balance_pro():
                     result["fred_rrpontsyd_date"] = rrp["date"]
                     result["fred_rrpontsyd_value_mrd"] = rrp["value"]
                     print(f"FRED RRPONTSYD (Overnight RRP): {rrp['date']} = ${rrp['value']:,.3f} Mrd. USD")
+                if wresbal:
+                    result["fred_wresbal_date"] = wresbal["date"]
+                    result["fred_wresbal_value_mio"] = wresbal["value"]
+                    print(f"FRED WRESBAL (Reserve Balances): {wresbal['date']} = ${wresbal['value']:,.0f} Mio. USD")
             return result
         else:
             print("Keine aktuellen Daten in der Tabelle gefunden.")
@@ -178,7 +183,7 @@ def get_us_account_balance_pro():
 
 def get_us_historical(limit_treasury: int = 100, limit_fred: int = 100, start_date: str = None):
     """
-    Holt historische Daten für TGA (Treasury), WDTGAL und RRPONTSYD (FRED).
+    Holt historische Daten für TGA (Treasury), WDTGAL, RRPONTSYD und WRESBAL (FRED).
     start_date z. B. '2020-01-01' – dann werden Daten ab diesem Datum geholt.
     Liefert eine Liste von Datensätzen zum Speichern (country, date, value, unit, label).
     """
@@ -238,20 +243,31 @@ def get_us_historical(limit_treasury: int = 100, limit_fred: int = 100, start_da
         for series_id, label in [
             ("WDTGAL", "WDTGAL (TGA Wed)"),
             ("RRPONTSYD", "RRPONTSYD (Overnight RRP)"),
+            ("WRESBAL", "WRESBAL (Reserve Balances)"),
         ]:
             obs = _get_fred_observations(
                 series_id, fred_key, limit=limit_fred_actual,
                 observation_start=start_date,
             )
-            scale = 1.0 / 1000.0 if series_id == "WDTGAL" else 1.0
-            for o in obs:
-                records.append({
-                    "country": "us",
-                    "date": o["date"],
-                    "value": o["value"] * scale,
-                    "unit": "Mrd. USD",
-                    "label": label,
-                })
+            # Fallback: FRED kann bei Serien-ID Groß-/Kleinschreibung sensibel sein
+            if not obs and series_id == "WRESBAL":
+                obs = _get_fred_observations(
+                    "wresbal", fred_key, limit=limit_fred_actual,
+                    observation_start=start_date,
+                )
+            if series_id == "WRESBAL" and not obs:
+                import sys
+                print(f"[Finix] FRED WRESBAL: keine Daten (series_id=WRESBAL und wresbal). Bitte FRED_API_KEY prüfen.", file=sys.stderr)
+            if obs:
+                scale = 1.0 / 1000.0 if series_id in ("WDTGAL", "WRESBAL") else 1.0
+                for o in obs:
+                    records.append({
+                        "country": "us",
+                        "date": o["date"],
+                        "value": o["value"] * scale,
+                        "unit": "Mrd. USD",
+                        "label": label,
+                    })
     return records
 
 

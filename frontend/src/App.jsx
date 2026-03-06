@@ -16,6 +16,7 @@ const API = '/api'
 const FRED_LEGEND_LINKS = {
   'WDTGAL (TGA Wed)': 'https://fred.stlouisfed.org/series/WDTGAL',
   'RRPONTSYD (Overnight RRP)': 'https://fred.stlouisfed.org/series/RRPONTSYD',
+  'WRESBAL (Reserve Balances)': 'https://fred.stlouisfed.org/series/WRESBAL',
   'WALCL': 'https://fred.stlouisfed.org/series/WALCL',
 }
 
@@ -109,9 +110,12 @@ export default function App() {
     }
   }
 
+  const [lastHistoryByLabel, setLastHistoryByLabel] = useState(null)
+
   const handleFetchUsHistory = async () => {
     setFetchingHistory(true)
     setError(null)
+    setLastHistoryByLabel(null)
     try {
       const res = await fetch(`${API}/fetch/us/history?limit=500&start_date=2020-01-01`, { method: 'POST' })
       if (!res.ok) {
@@ -121,6 +125,7 @@ export default function App() {
       const data = await res.json()
       await loadHistory('us')
       if (data.saved != null) setError(null)
+      if (data.by_label) setLastHistoryByLabel(data.by_label)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -132,6 +137,7 @@ export default function App() {
   const labelTGA = 'TGA Closing Balance'
   const labelWDTGAL = 'WDTGAL (TGA Wed)'
   const labelRRP = 'RRPONTSYD (Overnight RRP)'
+  const labelWRESBAL = 'WRESBAL (Reserve Balances)'
 
   const chartData = (() => {
     if (isUS && history.some((r) => r.label)) {
@@ -139,18 +145,21 @@ export default function App() {
       const tga = byLabel(labelTGA)
       const wdtgal = byLabel(labelWDTGAL)
       const rrp = byLabel(labelRRP)
-      let allDates = [...new Set([...tga.map((x) => x.date), ...wdtgal.map((x) => x.date), ...rrp.map((x) => x.date)])].sort()
+      const wresbal = byLabel(labelWRESBAL)
+      let allDates = [...new Set([...tga.map((x) => x.date), ...wdtgal.map((x) => x.date), ...rrp.map((x) => x.date), ...wresbal.map((x) => x.date)])].sort()
       const cutoffStr = '2020-01-01'
       allDates = allDates.filter((d) => d >= cutoffStr)
       return allDates.map((date) => {
         const t = tga.find((x) => x.date === date)
         const w = wdtgal.find((x) => x.date === date)
         const r = rrp.find((x) => x.date === date)
+        const wb = wresbal.find((x) => x.date === date)
         return {
           date,
           tga: t != null ? t.value : null,
           wdtgal: w != null ? w.value : null,
           rrp: r != null ? r.value : null,
+          wresbal: wb != null ? wb.value : null,
         }
       })
     }
@@ -164,10 +173,10 @@ export default function App() {
       }))
   })()
 
-  const hasMultiSeries = isUS && chartData.length > 0 && chartData.some((d) => d.tga != null || d.wdtgal != null || d.rrp != null)
+  const hasMultiSeries = isUS && chartData.length > 0 && chartData.some((d) => d.tga != null || d.wdtgal != null || d.rrp != null || d.wresbal != null)
   const yAxisUnit = isUS ? 'Mrd. USD' : (history[0]?.unit || '')
 
-  const [visibleSeries, setVisibleSeries] = useState({ tga: true, wdtgal: true, rrp: true })
+  const [visibleSeries, setVisibleSeries] = useState({ tga: true, wdtgal: true, rrp: true, wresbal: true })
   const toggleSeries = (key) => setVisibleSeries((s) => ({ ...s, [key]: !s[key] }))
 
   const n = chartData.length
@@ -237,7 +246,7 @@ export default function App() {
               borderRadius: '6px',
               cursor: fetchingHistory ? 'not-allowed' : 'pointer',
             }}
-            title="TGA, WDTGAL und RRPONTSYD – bis zu 500 Einträge pro Reihe von Treasury & FRED"
+            title="TGA, WDTGAL, RRPONTSYD und WRESBAL – bis zu 500 Einträge pro Reihe von Treasury & FRED"
           >
             {fetchingHistory ? 'Historie wird geladen…' : 'Historie laden (USA)'}
           </button>
@@ -247,6 +256,11 @@ export default function App() {
       {error && (
         <div role="alert" style={{ padding: '0.75rem', background: '#fef2f2', color: '#b91c1c', borderRadius: '6px', marginBottom: '1rem' }}>
           {error}
+        </div>
+      )}
+      {lastHistoryByLabel && Object.keys(lastHistoryByLabel).length > 0 && (
+        <div style={{ padding: '0.75rem', background: '#f0fdf4', color: '#166534', borderRadius: '6px', marginBottom: '1rem', fontSize: '0.9rem' }}>
+          Historie geladen – pro Indikator: {Object.entries(lastHistoryByLabel).map(([lbl, n]) => `${lbl}: ${n}`).join(', ')}
         </div>
       )}
 
@@ -274,6 +288,11 @@ export default function App() {
                   <span style={{ width: 10, height: 10, backgroundColor: '#dc2626' }} />
                   <span>{labelRRP}</span>
                 </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={visibleSeries.wresbal} onChange={() => toggleSeries('wresbal')} />
+                  <span style={{ width: 10, height: 10, backgroundColor: '#7c3aed' }} />
+                  <span>{labelWRESBAL}</span>
+                </label>
               </div>
             )}
             {chartData.length > 0 ? (
@@ -297,6 +316,7 @@ export default function App() {
                         {visibleSeries.tga && <Line type="monotone" dataKey="tga" name={labelTGA} stroke="#2563eb" strokeWidth={2} dot={false} connectNulls />}
                         {visibleSeries.wdtgal && <Line type="monotone" dataKey="wdtgal" name={labelWDTGAL} stroke="#059669" strokeWidth={2} dot={false} connectNulls />}
                         {visibleSeries.rrp && <Line type="monotone" dataKey="rrp" name={labelRRP} stroke="#dc2626" strokeWidth={2} dot={false} connectNulls />}
+                        {visibleSeries.wresbal && <Line type="monotone" dataKey="wresbal" name={labelWRESBAL} stroke="#7c3aed" strokeWidth={2} dot={false} connectNulls />}
                       </>
                     ) : (
                       <Line type="monotone" dataKey="value" name="Wert" stroke="#2563eb" strokeWidth={2} dot={false} />

@@ -103,7 +103,7 @@ def fetch_country(country: str):
         label=result.get("label", ""),
         **extra,
     )
-    # USA: WDTGAL und RRPONTSYD als eigene Zeitreihen speichern (für Chart)
+    # USA: WDTGAL, RRPONTSYD und WRESBAL als eigene Zeitreihen speichern (für Chart)
     if result.get("country") == "us":
         if result.get("fred_wdtgal_date") is not None and result.get("fred_wdtgal_value_mio") is not None:
             persist.save_record(
@@ -121,6 +121,14 @@ def fetch_country(country: str):
                 unit="Mrd. USD",
                 label="RRPONTSYD (Overnight RRP)",
             )
+        if result.get("fred_wresbal_date") is not None and result.get("fred_wresbal_value_mio") is not None:
+            persist.save_record(
+                country="us",
+                date=result["fred_wresbal_date"],
+                value=result["fred_wresbal_value_mio"] / 1000.0,
+                unit="Mrd. USD",
+                label="WRESBAL (Reserve Balances)",
+            )
     return {"ok": True, "record": result}
 
 
@@ -129,13 +137,16 @@ def fetch_us_history(
     limit: int = Query(100, ge=10, le=500, description="Anzahl historischer Einträge pro Reihe"),
     start_date: str = Query("2020-01-01", description="Ab diesem Datum (YYYY-MM-DD), z. B. 2020-01-01"),
 ):
-    """Historische Daten für TGA, WDTGAL und RRPONTSYD abrufen und in der DB speichern (ab start_date)."""
+    """Historische Daten für TGA, WDTGAL, RRPONTSYD und WRESBAL abrufen und in der DB speichern (ab start_date)."""
     import USA_Kontostand as api
     import persist
     records = api.get_us_historical(limit_treasury=limit, limit_fred=limit, start_date=start_date)
     if not records:
         raise HTTPException(status_code=502, detail="Keine historischen Daten erhalten (evtl. FRED_API_KEY setzen)")
+    by_label = {}
     for r in records:
+        lbl = r.get("label") or "(ohne Label)"
+        by_label[lbl] = by_label.get(lbl, 0) + 1
         persist.save_record(
             country=r["country"],
             date=r["date"],
@@ -143,7 +154,12 @@ def fetch_us_history(
             unit=r["unit"],
             label=r["label"],
         )
-    return {"ok": True, "saved": len(records), "message": f"{len(records)} historische Einträge gespeichert."}
+    return {
+        "ok": True,
+        "saved": len(records),
+        "by_label": by_label,
+        "message": f"{len(records)} historische Einträge gespeichert.",
+    }
 
 
 @app.get("/api/latest")
