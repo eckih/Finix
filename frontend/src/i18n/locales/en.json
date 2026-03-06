@@ -9,7 +9,10 @@
     "fetching": "Fetching…",
     "loadHistory": "Load history (USA)",
     "loadHistoryBusy": "Loading history…",
-    "loadHistoryTitle": "TGA, WDTGAL, RRPONTSYD and WRESBAL – up to 500 entries per series from Treasury & FRED"
+    "loadHistoryTitle": "TGA, WDTGAL, RRPONTSYD and WRESBAL – up to 500 entries per series from Treasury & FRED",
+    "update": "Update",
+    "updateAvailable": "New version {{version}} available",
+    "updateInstructions": "Open the GitHub release, download the new version, then run e.g. „git pull“ and „docker compose up --build“ to install."
   },
   "chart": {
     "history": "History",

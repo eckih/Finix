@@ -12,6 +12,23 @@ import {
 } from 'recharts'
 
 const API = '/api'
+const GITHUB_REPO = 'eckih/Finix'
+
+// Versionsvergleich: "1.0.0" / "v1.0.1" → [1,0,0]; gibt true zurück wenn latest > current
+function parseVersion(s) {
+  if (!s || typeof s !== 'string') return [0, 0, 0]
+  const v = s.replace(/^v/i, '').trim()
+  return v.split('.').map((n) => parseInt(n, 10) || 0).concat(0, 0).slice(0, 3)
+}
+function isNewerVersion(latest, current) {
+  const a = parseVersion(latest)
+  const b = parseVersion(current)
+  for (let i = 0; i < 3; i++) {
+    if (a[i] > b[i]) return true
+    if (a[i] < b[i]) return false
+  }
+  return false
+}
 
 // API-Einheiten (z. B. aus DB) → Übersetzungsschlüssel für units.*
 const UNIT_TO_I18N_KEY = {
@@ -67,6 +84,9 @@ export default function App() {
   const [fetching, setFetching] = useState(false)
   const [fetchingHistory, setFetchingHistory] = useState(false)
   const [error, setError] = useState(null)
+  const [updateAvailable, setUpdateAvailable] = useState(false)
+  const [latestVersion, setLatestVersion] = useState(null)
+  const [latestReleaseUrl, setLatestReleaseUrl] = useState(null)
   const locale = i18n.language && i18n.language.startsWith('en') ? 'en-US' : 'de-DE'
   const formatUnit = (unit) => {
     if (!unit || typeof unit !== 'string') return ''
@@ -117,6 +137,36 @@ export default function App() {
   useEffect(() => {
     loadHistory(selectedCountry)
   }, [selectedCountry, loadHistory])
+
+  // Update-Check: aktuelle Version vs. letztes GitHub-Release
+  useEffect(() => {
+    let cancelled = false
+    async function check() {
+      try {
+        const res = await fetch(`${API}/version`)
+        if (!res.ok) return
+        const { version: current } = await res.json()
+        const ghRes = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
+          headers: { Accept: 'application/vnd.github.v3+json' },
+        })
+        if (!ghRes.ok || cancelled) return
+        const release = await ghRes.json()
+        const tag = release.tag_name || ''
+        const url = release.html_url || `https://github.com/${GITHUB_REPO}/releases`
+        if (tag && isNewerVersion(tag, current)) {
+          if (!cancelled) {
+            setLatestVersion(tag.replace(/^v/i, ''))
+            setLatestReleaseUrl(url)
+            setUpdateAvailable(true)
+          }
+        }
+      } catch {
+        // Netzwerk oder CORS – Update-Button einfach nicht anzeigen
+      }
+    }
+    check()
+    return () => { cancelled = true }
+  }, [])
 
   const handleFetch = async () => {
     setFetching(true)
@@ -303,6 +353,28 @@ export default function App() {
             title={t('controls.loadHistoryTitle')}
           >
             {fetchingHistory ? t('controls.loadHistoryBusy') : t('controls.loadHistory')}
+          </button>
+        )}
+        {updateAvailable && latestReleaseUrl && (
+          <button
+            type="button"
+            onClick={() => {
+              window.open(latestReleaseUrl, '_blank', 'noopener,noreferrer')
+              // Kurze Anleitung anzeigen
+              alert(t('controls.updateInstructions'))
+            }}
+            title={t('controls.updateAvailable', { version: latestVersion || '' })}
+            style={{
+              padding: '0.5rem 1rem',
+              fontSize: '1rem',
+              background: '#7c3aed',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+            }}
+          >
+            {t('controls.update')} {latestVersion ? `(${latestVersion})` : ''}
           </button>
         )}
       </section>

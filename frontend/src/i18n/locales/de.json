@@ -9,7 +9,10 @@
     "fetching": "Abfrage läuft…",
     "loadHistory": "Historie laden (USA)",
     "loadHistoryBusy": "Historie wird geladen…",
-    "loadHistoryTitle": "TGA, WDTGAL, RRPONTSYD und WRESBAL – bis zu 500 Einträge pro Reihe von Treasury & FRED"
+    "loadHistoryTitle": "TGA, WDTGAL, RRPONTSYD und WRESBAL – bis zu 500 Einträge pro Reihe von Treasury & FRED",
+    "update": "Update",
+    "updateAvailable": "Neue Version {{version}} verfügbar",
+    "updateInstructions": "GitHub-Release öffnen, neue Version herunterladen und z. B. mit „git pull“ und „docker compose up --build“ einspielen."
   },
   "chart": {
     "history": "Verlauf",

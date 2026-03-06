@@ -64,6 +64,23 @@ def _get_countries(lang: str | None) -> list:
     return COUNTRIES_I18N[DEFAULT_LANG]
 
 
+def _get_app_version() -> str:
+    """Aktuelle App-Version aus VERSION-Datei oder Fallback."""
+    version_file = ROOT / "VERSION"
+    if version_file.exists():
+        try:
+            return version_file.read_text(encoding="utf-8").strip() or "1.0.0"
+        except Exception:
+            pass
+    return "1.0.0"
+
+
+@app.get("/api/version")
+def get_version():
+    """Aktuelle Version (für Update-Check)."""
+    return {"version": _get_app_version()}
+
+
 @app.get("/api/countries")
 def get_countries(
     lang: str | None = Query(None, description="Sprache für Ländernamen: de, en"),
