@@ -9,8 +9,16 @@ services:
       - "8000:8000"
     volumes:
       - ./data:/app/data
+    env_file:
+      - .env
     environment:
       - FRED_API_KEY=${FRED_API_KEY:-}
+      - ALPHA_VANTAGE_KEY=${ALPHA_VANTAGE_KEY:-}
+      - LM_STUDIO_URL=${LM_STUDIO_URL:-http://host.docker.internal:1234}
+      - LM_STUDIO_MODEL=${LM_STUDIO_MODEL:-}
+      - LM_STUDIO_API_KEY=${LM_STUDIO_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
 
   frontend:
     build:

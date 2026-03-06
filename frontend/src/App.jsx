@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   LineChart,
@@ -92,6 +92,121 @@ export default function App() {
   const [view, setView] = useState('finanzen')
   const [stats, setStats] = useState(null)
   const [statsLoading, setStatsLoading] = useState(false)
+  const [newsFeed, setNewsFeed] = useState([])
+  const [newsLoading, setNewsLoading] = useState(false)
+  const [newsSymbol, setNewsSymbol] = useState('')
+  const [newsWsKey, setNewsWsKey] = useState(0)
+  const [newsAiOpenIndex, setNewsAiOpenIndex] = useState(null)
+  const [newsAiLoadingIndex, setNewsAiLoadingIndex] = useState(null)
+  const [newsAiResponseByIndex, setNewsAiResponseByIndex] = useState({})
+  const [newsAiCustomPrompt, setNewsAiCustomPrompt] = useState('')
+  const [newsTranslations, setNewsTranslations] = useState({})
+  const [newsAiTestLoading, setNewsAiTestLoading] = useState(false)
+  const [newsAiTestResult, setNewsAiTestResult] = useState(null)
+  const [newsAiTestPrompt, setNewsAiTestPrompt] = useState('')
+  const [newsAiTestAskLoading, setNewsAiTestAskLoading] = useState(false)
+  const [newsAiTestResponse, setNewsAiTestResponse] = useState(null)
+  const [newsAiModels, setNewsAiModels] = useState([])
+  const [newsAiModelsLoading, setNewsAiModelsLoading] = useState(false)
+  const [newsAiSelectedModel, setNewsAiSelectedModel] = useState('')
+  const [newsAiTestThinking, setNewsAiTestThinking] = useState('')
+  const [newsAiTestStreamingAnswer, setNewsAiTestStreamingAnswer] = useState('')
+
+  useEffect(() => {
+    if (newsAiOpenIndex === null) return
+    const close = (e) => {
+      if (!e.target.closest('[data-ai-dropdown]')) setNewsAiOpenIndex(null)
+    }
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [newsAiOpenIndex])
+
+  const loadLmStudioModels = useCallback(async () => {
+    setNewsAiModelsLoading(true)
+    setNewsAiModels([])
+    try {
+      const res = await fetch(`${API}/ai/models`)
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || res.statusText)
+      const list = Array.isArray(data.models) ? data.models : []
+      setNewsAiModels(list)
+      if (list.length > 0) setNewsAiSelectedModel(prev => prev || list[0].id)
+    } catch (e) {
+      setNewsAiModels([])
+    } finally {
+      setNewsAiModelsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (view === 'konfiguration') loadLmStudioModels()
+  }, [view, loadLmStudioModels])
+
+  const testLmStudio = useCallback(async () => {
+    setNewsAiTestLoading(true)
+    setNewsAiTestResult(null)
+    try {
+      const qs = newsAiSelectedModel ? `?model=${encodeURIComponent(newsAiSelectedModel)}` : ''
+      const res = await fetch(`${API}/ai/test${qs}`)
+      const data = await res.json().catch(() => ({}))
+      setNewsAiTestResult({ ok: data.ok === true, message: data.message || (res.ok ? t('news.aiTestOk') : data.detail || res.statusText) })
+    } catch (e) {
+      setNewsAiTestResult({ ok: false, message: e.message || 'Netzwerkfehler' })
+    } finally {
+      setNewsAiTestLoading(false)
+    }
+  }, [t, newsAiSelectedModel])
+
+  const askLmStudioTestPrompt = useCallback(async () => {
+    const q = (newsAiTestPrompt || '').trim()
+    if (!q) return
+    setNewsAiTestAskLoading(true)
+    setNewsAiTestResponse(null)
+    try {
+      const body = { question: q, title: '', summary: '' }
+      if (newsAiSelectedModel) body.model = newsAiSelectedModel
+      const res = await fetch(`${API}/ai/ask`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setNewsAiTestResponse({ error: data.detail || res.statusText })
+        return
+      }
+      setNewsAiTestResponse({ answer: data.answer || '' })
+    } catch (e) {
+      setNewsAiTestResponse({ error: e.message || 'Netzwerkfehler' })
+    } finally {
+      setNewsAiTestAskLoading(false)
+    }
+  }, [newsAiTestPrompt, newsAiSelectedModel])
+
+  const askAi = useCallback(async (index, question, title, summary) => {
+    if (!(question || '').trim()) return
+    setNewsAiLoadingIndex(index)
+    setNewsAiResponseByIndex((prev) => ({ ...prev, [index]: null }))
+    try {
+      const body = { question: (question || '').trim(), title: title || '', summary: summary || '' }
+      if (newsAiSelectedModel) body.model = newsAiSelectedModel
+      const res = await fetch(`${API}/ai/ask`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setNewsAiResponseByIndex((prev) => ({ ...prev, [index]: { question: (question || '').trim(), error: data.detail || res.statusText } }))
+        return
+      }
+      setNewsAiResponseByIndex((prev) => ({ ...prev, [index]: { question: (question || '').trim(), answer: data.answer || '' } }))
+    } catch (e) {
+      setNewsAiResponseByIndex((prev) => ({ ...prev, [index]: { question: (question || '').trim(), error: e.message } }))
+    } finally {
+      setNewsAiLoadingIndex(null)
+    }
+  }, [newsAiSelectedModel])
   const [marketsHistory, setMarketsHistory] = useState([])
   const [kurseLoading, setKurseLoading] = useState(false)
   const [kurseFetchingHistory, setKurseFetchingHistory] = useState(false)
@@ -191,6 +306,112 @@ export default function App() {
   useEffect(() => {
     if (view === 'statistik') loadStats()
   }, [view, loadStats])
+
+  const newsWsRef = useRef(null)
+
+  const loadNewsHttp = useCallback(async (symbol, forceRefresh = false) => {
+    const sym = (symbol || '').trim()
+    setError(null)
+    try {
+      const res = await fetch(`${API}/news?symbol=${encodeURIComponent(sym)}&limit=15${forceRefresh ? '&refresh=1' : ''}`)
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setNewsFeed([])
+        setError(data.detail || res.statusText)
+        setNewsLoading(false)
+        return
+      }
+      const feed = Array.isArray(data.feed) ? data.feed : []
+      setNewsFeed(feed)
+      if (feed.length === 0) setError(sym ? t('news.noNewsForSymbol', { symbol: sym }) : t('news.noNewsDefault'))
+      else setError(null)
+    } catch (e) {
+      setNewsFeed([])
+      setError(e.message)
+    } finally {
+      setNewsLoading(false)
+    }
+  }, [t])
+
+  useEffect(() => {
+    if (view !== 'news') return
+    const sym = (newsSymbol || '').trim()
+    setNewsLoading(true)
+    setError(null)
+    loadNewsHttp(sym)
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const host = window.location.host
+    const path = '/api/news/ws'
+    const qs = sym ? `?symbol=${encodeURIComponent(sym)}` : ''
+    const wsUrl = `${protocol}//${host}${path}${qs}`
+    const ws = new WebSocket(wsUrl)
+    newsWsRef.current = ws
+    ws.onopen = () => {}
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        if (data.type === 'feed') {
+          setNewsFeed(data.feed || [])
+          setError(null)
+        } else if (data.type === 'error') {
+          setError(data.message || 'Fehler')
+          setNewsFeed([])
+        }
+      } catch (_) {}
+      setNewsLoading(false)
+    }
+    ws.onerror = () => setNewsLoading(false)
+    ws.onclose = () => setNewsLoading(false)
+    return () => {
+      ws.close()
+      newsWsRef.current = null
+    }
+  }, [view, newsSymbol, newsWsKey, loadNewsHttp])
+
+  const refreshNews = useCallback(() => {
+    setNewsWsKey((k) => k + 1)
+    setNewsLoading(true)
+    loadNewsHttp((newsSymbol || '').trim(), true)
+  }, [loadNewsHttp, newsSymbol])
+
+  const newsTranslateBatchRef = useRef(0)
+  useEffect(() => {
+    if (view !== 'news') return
+    setNewsTranslations({})
+    newsTranslateBatchRef.current += 1
+  }, [view, newsSymbol, i18n.language])
+
+  // Übersetzungen im Hintergrund (blockiert nicht); Tooltip zeigt Übersetzung wenn fertig
+  useEffect(() => {
+    if (!newsFeed.length || view !== 'news') return
+    const targetLang = i18n.language && i18n.language.startsWith('en') ? 'en' : 'de'
+    if (targetLang === 'en') return
+    const thisBatch = newsTranslateBatchRef.current
+    const maxItems = Math.min(20, newsFeed.length)
+    const delay = (ms) => new Promise((r) => setTimeout(r, ms))
+    const request = (i, field, raw) => {
+      if (!raw || !String(raw).trim()) return
+      const key = `${i}_${field}_${targetLang}`
+      const q = encodeURIComponent(String(raw).slice(0, 500))
+      fetch(`${API}/translate?text=${q}&target=${targetLang}`)
+        .then((r) => (r.ok ? r.json() : { translated: '' }))
+        .then((data) => {
+          if (thisBatch !== newsTranslateBatchRef.current) return
+          const translated = data.translated && String(data.translated).trim()
+          if (!translated) return
+          setNewsTranslations((prev) => ({ ...prev, [key]: translated }))
+        })
+        .catch(() => {})
+    }
+    let step = 0
+    for (let i = 0; i < maxItems; i++) {
+      const item = newsFeed[i]
+      const t = step * 80
+      step++
+      delay(t).then(() => request(i, 'title', item.title))
+      delay(t + 40).then(() => request(i, 'summary', item.summary))
+    }
+  }, [newsFeed, i18n.language, view])
 
   // Update-Check: aktuelle Version vs. letztes GitHub-Release
   useEffect(() => {
@@ -498,6 +719,20 @@ export default function App() {
           </button>
           <button
             type="button"
+            onClick={() => setView('konfiguration')}
+            style={{
+              padding: '0.35rem 0.75rem',
+              border: view === 'konfiguration' ? '2px solid #2563eb' : '1px solid #ccc',
+              borderRadius: 6,
+              background: view === 'konfiguration' ? '#eff6ff' : '#fff',
+              cursor: 'pointer',
+              fontSize: '0.95rem',
+            }}
+          >
+            {t('menu.konfiguration')}
+          </button>
+          <button
+            type="button"
             onClick={() => setView('news')}
             style={{
               padding: '0.35rem 0.75rem',
@@ -641,7 +876,7 @@ export default function App() {
                         label={{ value: 'Krypto (USD)', angle: 90, position: 'insideRight', style: { textAnchor: 'middle', fontSize: 12 } }}
                       />
                       <Tooltip
-                        formatter={(value) => [value != null ? Number(value).toLocaleString(locale, { maximumFractionDigits: 2 }) : '–', t('chart.tooltipValue')]}
+                        formatter={(value, name) => [value != null ? Number(value).toLocaleString(locale, { maximumFractionDigits: 2 }) : '–', name ?? t('chart.tooltipValue')]}
                         labelFormatter={(label) => `${t('chart.tooltipDate')}: ${formatDate(label)}`}
                       />
                       {visibleKurseSeries.sp500 && <Line type="monotone" dataKey="sp500" name={labelSP500} stroke="#2563eb" strokeWidth={2} dot={false} connectNulls yAxisId="left" />}
@@ -805,11 +1040,333 @@ export default function App() {
         ) : null}
       </section>
         </>
+      ) : view === 'konfiguration' ? (
+        <>
+      <section style={{ background: '#fff', padding: '1rem', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', marginBottom: '1.5rem' }}>
+        <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.1rem' }}>{t('config.title')}</h2>
+        <p style={{ margin: '0 0 1rem', fontSize: '0.85rem', color: '#64748b', maxWidth: '42rem' }}>{t('config.aiModelsHint')}</p>
+        <h3 style={{ margin: '1rem 0 0.5rem', fontSize: '1rem', color: '#334155' }}>{t('config.lmStudioTitle')}</h3>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.95rem' }}>
+            <span>{t('news.aiModel')}:</span>
+            <select
+              value={newsAiSelectedModel}
+              onChange={(e) => setNewsAiSelectedModel(e.target.value)}
+              disabled={newsAiModelsLoading}
+              style={{
+                padding: '0.35rem 0.5rem',
+                fontSize: '0.9rem',
+                minWidth: 180,
+                maxWidth: 280,
+                border: '1px solid #cbd5e1',
+                borderRadius: 6,
+                background: '#fff',
+              }}
+            >
+              {newsAiModelsLoading ? (
+                <option value="">{t('news.aiLoading')}</option>
+              ) : newsAiModels.length === 0 ? (
+                <option value="">{t('news.aiNoModels')}</option>
+              ) : (
+                newsAiModels.map((m) => {
+                  const label = m.id === 'gemini-2.5-flash' ? t('config.gemini25Flash') : m.id === 'gemini-2.5-pro' ? t('config.gemini25Pro') : m.id === 'claude-sonnet-4-6' ? t('config.sonnet46') : m.id
+                  return <option key={m.id} value={m.id}>{label}</option>
+                })
+              )}
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={() => loadLmStudioModels()}
+            disabled={newsAiModelsLoading}
+            style={{
+              padding: '0.35rem 0.6rem',
+              fontSize: '0.9rem',
+              background: newsAiModelsLoading ? '#94a3b8' : '#e2e8f0',
+              color: '#334155',
+              border: '1px solid #cbd5e1',
+              borderRadius: 6,
+              cursor: newsAiModelsLoading ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {t('news.refresh')}
+          </button>
+          <button
+            type="button"
+            onClick={testLmStudio}
+            disabled={newsAiTestLoading}
+            style={{
+              padding: '0.4rem 0.75rem',
+              fontSize: '0.95rem',
+              background: newsAiTestLoading ? '#94a3b8' : '#64748b',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 6,
+              cursor: newsAiTestLoading ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {newsAiTestLoading ? t('news.aiLoading') : t('news.aiTest')}
+          </button>
+        </div>
+        {newsAiTestResult && (
+          <div
+            role="status"
+            style={{
+              padding: '0.5rem 0.75rem',
+              marginBottom: '1rem',
+              borderRadius: 6,
+              fontSize: '0.9rem',
+              background: newsAiTestResult.ok ? '#f0fdf4' : '#fef2f2',
+              color: newsAiTestResult.ok ? '#166534' : '#b91c1c',
+              border: `1px solid ${newsAiTestResult.ok ? '#bbf7d0' : '#fecaca'}`,
+            }}
+          >
+            {newsAiTestResult.ok ? '✓ ' : '✗ '}{newsAiTestResult.message}
+          </div>
+        )}
+        <div style={{ marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <input
+              type="text"
+              value={newsAiTestPrompt}
+              onChange={(e) => setNewsAiTestPrompt(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') askLmStudioTestPrompt() }}
+              placeholder={t('news.aiTestPromptPlaceholder')}
+              style={{ padding: '0.4rem 0.6rem', fontSize: '0.95rem', flex: '1', minWidth: 200, maxWidth: 400, border: '1px solid #cbd5e1', borderRadius: 6 }}
+            />
+            <button
+              type="button"
+              onClick={askLmStudioTestPrompt}
+              disabled={newsAiTestAskLoading || !(newsAiTestPrompt || '').trim()}
+              style={{
+                padding: '0.4rem 0.75rem',
+                fontSize: '0.95rem',
+                background: newsAiTestAskLoading || !(newsAiTestPrompt || '').trim() ? '#94a3b8' : '#2563eb',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 6,
+                cursor: newsAiTestAskLoading || !(newsAiTestPrompt || '').trim() ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {newsAiTestAskLoading ? t('news.aiLoading') : t('news.aiTestSend')}
+            </button>
+          </div>
+          {newsAiTestResponse && (
+            <div
+              role="status"
+              style={{
+                padding: '0.75rem 1rem',
+                marginTop: '0.5rem',
+                borderRadius: 6,
+                fontSize: '0.9rem',
+                background: newsAiTestResponse.error ? '#fef2f2' : '#f0f9ff',
+                color: newsAiTestResponse.error ? '#b91c1c' : '#0c4a6e',
+                border: `1px solid ${newsAiTestResponse.error ? '#fecaca' : '#bae6fd'}`,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+              }}
+            >
+              {newsAiTestResponse.error ? newsAiTestResponse.error : newsAiTestResponse.answer}
+            </div>
+          )}
+        </div>
+      </section>
+        </>
       ) : view === 'news' ? (
         <>
       <section style={{ background: '#fff', padding: '1rem', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', marginBottom: '1.5rem' }}>
-        <h2 style={{ margin: '0 0 1rem', fontSize: '1.1rem' }}>{t('news.title')}</h2>
-        <p style={{ color: '#64748b', margin: 0 }}>{t('news.placeholder')}</p>
+        <h2 style={{ margin: '0 0 0.25rem', fontSize: '1.1rem' }}>{t('news.title')}</h2>
+        <p style={{ margin: '0 0 1rem', fontSize: '0.8rem', color: '#64748b' }}>{t('news.symbolHint')} {t('news.tooltipHint')}</p>
+        {error && view === 'news' && (
+          <div role="alert" style={{ padding: '0.75rem', background: '#fef2f2', color: '#b91c1c', borderRadius: 6, marginBottom: '1rem', fontSize: '0.9rem' }}>
+            {error}
+          </div>
+        )}
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.95rem' }}>
+            <span>{t('news.symbol')}:</span>
+            <input
+              type="text"
+              value={newsSymbol}
+              onChange={(e) => setNewsSymbol((e.target.value || '').toUpperCase().slice(0, 6))}
+              placeholder="TSLA"
+              style={{ padding: '0.4rem 0.6rem', fontSize: '1rem', width: 90, border: '1px solid #cbd5e1', borderRadius: 6 }}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={refreshNews}
+            disabled={newsLoading}
+            style={{
+              padding: '0.4rem 0.75rem',
+              fontSize: '0.95rem',
+              background: newsLoading ? '#94a3b8' : '#2563eb',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 6,
+              cursor: newsLoading ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {newsLoading ? t('news.loading') : t('news.refresh')}
+          </button>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.95rem', color: '#64748b' }}>
+            <span>{t('news.aiModel')}:</span>
+            <span style={{ fontWeight: 500 }}>{newsAiSelectedModel || t('news.aiNoModels')}</span>
+          </label>
+        </div>
+        {newsLoading && newsFeed.length === 0 ? (
+          <p style={{ color: '#64748b', margin: 0 }}>{t('news.loading')}</p>
+        ) : newsFeed.length === 0 ? (
+          <p style={{ color: '#64748b', margin: 0 }}>{t('news.noNews')}</p>
+        ) : (
+          <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {newsFeed.map((item, i) => {
+              const ts = item.time_published
+              const dateStr = ts ? `${ts.slice(0, 4)}-${ts.slice(4, 6)}-${ts.slice(6, 8)} ${ts.slice(9, 11)}:${ts.slice(11, 13)}` : ''
+              const sentiment = item.ticker_sentiment?.[0]
+              const sentLabel = sentiment?.ticker_sentiment_label
+              const sentScore = sentiment?.ticker_sentiment_score
+              const newsLang = i18n.language && i18n.language.startsWith('en') ? 'en' : 'de'
+              const rawTitle = (item.title ?? '').trim()
+              const rawSummary = (item.summary ?? '').trim()
+              const trTitle = newsTranslations[`${i}_title_${newsLang}`]
+              const trSummary = newsTranslations[`${i}_summary_${newsLang}`]
+              const titleTooltip = newsLang === 'de'
+                ? (trTitle && trTitle.trim() !== rawTitle ? trTitle : t('news.translating'))
+                : (trTitle ?? item.title ?? '')
+              const summaryTooltip = newsLang === 'de'
+                ? (trSummary && trSummary.trim() !== rawSummary ? trSummary : t('news.translating'))
+                : (trSummary ?? item.summary ?? '')
+              return (
+                <li
+                  key={i}
+                  style={{
+                    padding: '1rem',
+                    background: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: 8,
+                  }}
+                >
+                  <div style={{ marginBottom: '0.5rem' }}>
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={titleTooltip}
+                      style={{ fontWeight: 600, color: '#1e40af', textDecoration: 'none', fontSize: '1rem' }}
+                    >
+                      {item.title || t('news.noTitle')}
+                    </a>
+                  </div>
+                  {item.summary && (
+                    <p
+                      title={summaryTooltip}
+                      style={{ margin: '0.5rem 0', fontSize: '0.9rem', color: '#475569', lineHeight: 1.45 }}
+                    >
+                      {item.summary.slice(0, 300)}{item.summary.length > 300 ? '…' : ''}
+                    </p>
+                  )}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', fontSize: '0.8rem', color: '#64748b', marginTop: '0.5rem' }}>
+                    {item.source && <span>{t('news.source')}: {item.source}</span>}
+                    {dateStr && <span>{formatDate(dateStr.slice(0, 10))} {dateStr.slice(11, 16)}</span>}
+                    {sentLabel != null && (
+                      <span>
+                        {t('news.sentiment')}: {sentLabel}
+                        {sentScore != null && ` (${Number(sentScore).toFixed(2)})`}
+                      </span>
+                    )}
+                  </div>
+                  <div data-ai-dropdown style={{ position: 'relative', marginTop: '0.75rem' }}>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setNewsAiOpenIndex((prev) => (prev === i ? null : i)) }}
+                      style={{
+                        padding: '0.35rem 0.6rem',
+                        fontSize: '0.85rem',
+                        background: '#f1f5f9',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: 6,
+                        cursor: 'pointer',
+                        fontWeight: 500,
+                      }}
+                    >
+                      {t('news.aiButton')} ▾
+                    </button>
+                    {newsAiOpenIndex === i && (
+                      <div
+                        role="menu"
+                        style={{
+                          position: 'absolute',
+                          left: 0,
+                          top: '100%',
+                          marginTop: 4,
+                          minWidth: 280,
+                          background: '#fff',
+                          border: '1px solid #e2e8f0',
+                          borderRadius: 8,
+                          boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                          padding: '0.5rem 0',
+                          zIndex: 10,
+                        }}
+                      >
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => askAi(i, t('news.aiQuestionStocks'), item.title, item.summary)}
+                          disabled={newsAiLoadingIndex === i}
+                          style={{ display: 'block', width: '100%', padding: '0.5rem 0.75rem', textAlign: 'left', border: 'none', background: 'none', cursor: newsAiLoadingIndex === i ? 'wait' : 'pointer', fontSize: '0.9rem' }}
+                        >
+                          {t('news.aiQuestionStocks')}
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => askAi(i, t('news.aiQuestionBtc'), item.title, item.summary)}
+                          disabled={newsAiLoadingIndex === i}
+                          style={{ display: 'block', width: '100%', padding: '0.5rem 0.75rem', textAlign: 'left', border: 'none', background: 'none', cursor: newsAiLoadingIndex === i ? 'wait' : 'pointer', fontSize: '0.9rem' }}
+                        >
+                          {t('news.aiQuestionBtc')}
+                        </button>
+                        <div style={{ padding: '0.5rem 0.75rem', borderTop: '1px solid #e2e8f0', display: 'flex', gap: 4 }}>
+                          <input
+                            type="text"
+                            placeholder={t('news.aiCustomPrompt')}
+                            value={newsAiCustomPrompt}
+                            onChange={(e) => setNewsAiCustomPrompt(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') askAi(i, newsAiCustomPrompt, item.title, item.summary) }}
+                            style={{ flex: 1, padding: '0.4rem 0.5rem', fontSize: '0.9rem', border: '1px solid #e2e8f0', borderRadius: 6, boxSizing: 'border-box' }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => askAi(i, newsAiCustomPrompt, item.title, item.summary)}
+                            disabled={newsAiLoadingIndex === i}
+                            style={{ padding: '0.4rem 0.6rem', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
+                          >
+                            {t('news.aiAsk')}
+                          </button>
+                        </div>
+                        {newsAiLoadingIndex === i && (
+                          <div style={{ padding: '0.5rem 0.75rem', borderTop: '1px solid #e2e8f0', fontSize: '0.85rem', color: '#64748b' }}>
+                            {t('news.aiLoading')}
+                          </div>
+                        )}
+                        {newsAiResponseByIndex[i] && newsAiLoadingIndex !== i && (
+                          <div style={{ padding: '0.5rem 0.75rem', borderTop: '1px solid #e2e8f0', fontSize: '0.85rem', maxHeight: 200, overflow: 'auto' }}>
+                            {newsAiResponseByIndex[i].error ? (
+                              <p style={{ margin: 0, color: '#b91c1c' }}>{newsAiResponseByIndex[i].error}</p>
+                            ) : (
+                              <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{newsAiResponseByIndex[i].answer}</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
       </section>
         </>
       ) : (
@@ -971,7 +1528,7 @@ export default function App() {
                       label={{ value: '%', angle: 90, position: 'insideRight', style: { textAnchor: 'middle', fontSize: 12 } }}
                     />
                     <Tooltip
-                      formatter={(value) => [value != null ? Number(value).toLocaleString(locale, { maximumFractionDigits: 2 }) : '–', t('chart.tooltipValue')]}
+                      formatter={(value, name) => [value != null ? Number(value).toLocaleString(locale, { maximumFractionDigits: 2 }) : '–', name ?? t('chart.tooltipValue')]}
                       labelFormatter={(label) => `${t('chart.tooltipDate')}: ${formatDate(label)}`}
                     />
                     <Legend content={<LegendWithLinks />} />

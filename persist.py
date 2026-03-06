@@ -53,6 +53,140 @@ def init_db(db_path: str = None) -> str:
     return path
 
 
+def init_news_db(db_path: str = None) -> None:
+    """Tabelle news und news_fetch anlegen (News von Alpha Vantage)."""
+    _ensure_data_dir()
+    path = db_path or str(DB_PATH)
+    conn = sqlite3.connect(path)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS news (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            time_published TEXT NOT NULL,
+            title TEXT,
+            summary TEXT,
+            url TEXT,
+            source TEXT,
+            fetched_at TEXT NOT NULL,
+            payload TEXT
+        )
+    """)
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_news_symbol_time_url ON news(symbol, time_published, COALESCE(url, ''))"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_news_symbol ON news(symbol)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS news_fetch (
+            symbol TEXT PRIMARY KEY,
+            last_fetched_at TEXT NOT NULL
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def save_news_feed(symbol: str, feed: list, fetched_at: str = None) -> int:
+    """
+    News-Feed für ein Symbol speichern. Doppelte (symbol, time_published, url) werden übersprungen.
+    :param symbol: Ticker oder '' für Fallback/All
+    :param feed: Liste von Dicts wie von Alpha Vantage (title, summary, url, time_published, source, ticker_sentiment, ...)
+    :param fetched_at: ISO-Zeitpunkt; default jetzt UTC
+    :return: Anzahl neu eingefügter Einträge
+    """
+    init_news_db()
+    ts = fetched_at or (datetime.utcnow().isoformat() + "Z")
+    sym = (symbol or "").strip().upper() or ""
+    conn = _get_conn()
+    inserted = 0
+    try:
+        for item in feed:
+            if not isinstance(item, dict):
+                continue
+            time_pub = (item.get("time_published") or "").strip() or None
+            url = (item.get("url") or "").strip() or ""
+            if not time_pub:
+                continue
+            title = item.get("title") or ""
+            summary = item.get("summary") or ""
+            source = item.get("source") or ""
+            payload = {k: v for k, v in item.items() if k not in ("title", "summary", "url", "time_published", "source")}
+            payload_str = json.dumps(payload, ensure_ascii=False) if payload else None
+            try:
+                conn.execute(
+                    """INSERT OR IGNORE INTO news (symbol, time_published, title, summary, url, source, fetched_at, payload)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (sym, time_pub, title, summary, url, source, ts, payload_str),
+                )
+                if conn.total_changes:
+                    inserted += 1
+            except Exception:
+                pass
+        conn.execute(
+            "INSERT OR REPLACE INTO news_fetch (symbol, last_fetched_at) VALUES (?, ?)",
+            (sym, ts),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return inserted
+
+
+def load_news_from_db(symbol: str = None, limit: int = 15) -> list:
+    """
+    Gespeicherte News lesen (neueste zuerst).
+    :param symbol: Ticker oder None/'' für Fallback-Symbol (gespeichert unter '' oder AAPL)
+    :param limit: max. Anzahl
+    :return: Liste von Dicts im Alpha-Vantage-Feed-Format (title, summary, url, time_published, source, ticker_sentiment, ...)
+    """
+    if not DB_PATH.exists():
+        return []
+    init_news_db()
+    sym = (symbol or "").strip().upper() or ""
+    conn = _get_conn()
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """SELECT time_published, title, summary, url, source, payload
+               FROM news WHERE symbol = ? ORDER BY time_published DESC LIMIT ?""",
+            (sym, limit),
+        ).fetchall()
+        out = []
+        for row in rows:
+            d = {
+                "time_published": row[0],
+                "title": row[1] or "",
+                "summary": row[2] or "",
+                "url": row[3] or "",
+                "source": row[4] or "",
+            }
+            if row[5]:
+                try:
+                    d.update(json.loads(row[5]))
+                except (TypeError, json.JSONDecodeError):
+                    pass
+            out.append(d)
+        return out
+    finally:
+        conn.close()
+
+
+def get_news_last_fetched(symbol: str = None) -> str | None:
+    """Zeitpunkt des letzten API-Abrufs für dieses Symbol (ISO-String). None wenn noch nie."""
+    if not DB_PATH.exists():
+        return None
+    init_news_db()
+    sym = (symbol or "").strip().upper() or ""
+    conn = _get_conn()
+    try:
+        row = conn.execute(
+            "SELECT last_fetched_at FROM news_fetch WHERE symbol = ?",
+            (sym,),
+        ).fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
 def record_exists(country: str, date: str, label: str = "") -> bool:
     """
     Prüft, ob ein Eintrag mit (country, date, label) bereits existiert.
