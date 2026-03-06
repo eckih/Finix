@@ -3,6 +3,31 @@
     "title": "Finix",
     "subtitle": "Staatsfinanzen im Überblick – offizielle Daten (TGA, Kreditbestand, Nettofinanzierungssaldo)"
   },
+  "menu": {
+    "finanzen": "Staatsfinanzen",
+    "kurse": "Kurse",
+    "statistik": "Statistik"
+  },
+  "statistik": {
+    "title": "Datenbank-Statistik",
+    "totalRecords": "Einträge gesamt",
+    "dbSize": "Datenbankgröße",
+    "dateRange": "Datumsbereich",
+    "lastUpdate": "Letzte Aktualisierung",
+    "byCountry": "Nach Land",
+    "byLabel": "Nach Indikator/Label",
+    "byUnit": "Nach Einheit",
+    "country": "Land",
+    "label": "Indikator",
+    "unit": "Einheit",
+    "count": "Anzahl"
+  },
+  "kurse": {
+    "title": "Aktien & Krypto",
+    "noData": "Noch keine Kurse. Klicke auf „Historie laden (USA)“ bei Staatsfinanzen oder unten auf „Historie laden“.",
+    "loadHistory": "Historie laden",
+    "loadHistoryBusy": "Wird geladen…"
+  },
   "controls": {
     "country": "Land",
     "fetch": "Jetzt abfragen & speichern",
@@ -34,6 +59,10 @@
     "fetchedAt": "Abgerufen",
     "noEntries": "Keine Einträge für dieses Land."
   },
+  "historyProgress": {
+    "title": "Fortschritt Historie laden",
+    "waiting": "Verbindung wird hergestellt."
+  },
   "messages": {
     "historyLoaded": "Historie geladen – pro Indikator:",
     "errorCountries": "Länder konnten nicht geladen werden",
@@ -46,7 +75,9 @@
     "rrp": "RRPONTSYD (Overnight RRP)",
     "wresbal": "WRESBAL (Reserve Balances)",
     "sofr": "SOFR",
-    "effr": "EFFR"
+    "effr": "EFFR",
+    "sp500": "S&P 500",
+    "btc": "BTC"
   },
   "legend": {
     "sourceFred": "Quelle: FRED – {{label}}"

@@ -53,9 +53,29 @@ def init_db(db_path: str = None) -> str:
     return path
 
 
-def save_record(country: str, date: str, value: float, unit: str, label: str = "", **extra) -> None:
+def record_exists(country: str, date: str, label: str = "") -> bool:
     """
-    Einen Abfrage-Datensatz in SQLite speichern.
+    Prüft, ob ein Eintrag mit (country, date, label) bereits existiert.
+    """
+    if not DB_PATH.exists():
+        return False
+    conn = _get_conn()
+    try:
+        lab = label or ""
+        row = conn.execute(
+            """SELECT 1 FROM finance_records
+               WHERE LOWER(country) = ? AND date = ? AND COALESCE(label, '') = ?
+               LIMIT 1""",
+            (country.lower(), date, lab),
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+def save_record(country: str, date: str, value: float, unit: str, label: str = "", **extra) -> bool:
+    """
+    Einen Abfrage-Datensatz in SQLite speichern, nur wenn (country, date, label) noch nicht existiert.
 
     :param country: Ländercode (z. B. us, de, at, ch)
     :param date: Stichtag/Periode (z. B. 2026-03-02 oder Januar 2026)
@@ -63,8 +83,11 @@ def save_record(country: str, date: str, value: float, unit: str, label: str = "
     :param unit: Einheit (z. B. Mrd. USD, Mrd. EUR)
     :param label: optionale Bezeichnung
     :param extra: weitere Felder werden als JSON in extra gespeichert
+    :return: True wenn gespeichert, False wenn bereits vorhanden (übersprungen)
     """
     init_db()
+    if record_exists(country, date, label):
+        return False
     conn = _get_conn()
     try:
         extra_json = json.dumps(extra, ensure_ascii=False) if extra else None
@@ -76,23 +99,25 @@ def save_record(country: str, date: str, value: float, unit: str, label: str = "
                 date,
                 value,
                 unit,
-                label,
+                label or "",
                 datetime.utcnow().isoformat() + "Z",
                 extra_json,
             ),
         )
         conn.commit()
+        return True
     finally:
         conn.close()
 
 
-def load_history(country: str = None, limit: int = None, min_date: str = None):
+def load_history(country: str = None, limit: int = None, min_date: str = None, newest_first: bool = False):
     """
     Gespeicherte Datensätze aus SQLite lesen.
 
-    :param country: nur dieses Land (z. B. us, de); None = alle
+    :param country: nur dieses Land (z. B. us, de, markets); None = alle
     :param limit: maximale Anzahl Einträge pro Land (bei min_date: Einträge ab min_date)
     :param min_date: optional z. B. '2020-01-01' – nur Datensätze mit date >= min_date
+    :param newest_first: bei limit die neuesten Einträge nehmen (für Kurse/Zeitreihen)
     :return: Liste von Dicts mit country, date, value, unit, label, fetched_at, extra (geparst)
     """
     if not DB_PATH.exists():
@@ -107,8 +132,13 @@ def load_history(country: str = None, limit: int = None, min_date: str = None):
             if min_date:
                 sql += " AND date >= ?"
                 args.append(min_date)
-            sql += " ORDER BY date ASC, fetched_at DESC"
-            rows = conn.execute(sql, args).fetchall()
+            if newest_first and limit:
+                sql += " ORDER BY date DESC, fetched_at DESC LIMIT ?"
+                args.append(limit)
+                rows = list(reversed(conn.execute(sql, args).fetchall()))
+            else:
+                sql += " ORDER BY date ASC, fetched_at DESC"
+                rows = conn.execute(sql, args).fetchall()
         else:
             sql = """SELECT id, country, date, value, unit, label, fetched_at, extra
                      FROM finance_records"""
@@ -142,6 +172,63 @@ def load_history(country: str = None, limit: int = None, min_date: str = None):
             out.sort(key=lambda x: (x.get("date", ""), x.get("country", "")))
             return out
         return records
+    finally:
+        conn.close()
+
+
+def get_db_stats():
+    """
+    Zusammenfassung der Datenbank: Größe, Anzahl Einträge, Verteilung nach Land/Label, Datumsbereich.
+
+    :return: Dict mit file_size_bytes, total_records, by_country, by_label, date_min, date_max, last_fetched_at
+    """
+    if not DB_PATH.exists():
+        return {
+            "file_size_bytes": 0,
+            "total_records": 0,
+            "by_country": [],
+            "by_label": [],
+            "by_unit": [],
+            "date_min": None,
+            "date_max": None,
+            "last_fetched_at": None,
+        }
+    file_size_bytes = DB_PATH.stat().st_size
+    conn = _get_conn()
+    try:
+        total_records = conn.execute("SELECT COUNT(*) FROM finance_records").fetchone()[0]
+        by_country = [
+            {"country": row[0], "count": row[1]}
+            for row in conn.execute(
+                "SELECT country, COUNT(*) FROM finance_records GROUP BY country ORDER BY COUNT(*) DESC"
+            ).fetchall()
+        ]
+        by_label = [
+            {"label": row[0] or "(ohne Label)", "count": row[1]}
+            for row in conn.execute(
+                "SELECT label, COUNT(*) FROM finance_records GROUP BY label ORDER BY COUNT(*) DESC"
+            ).fetchall()
+        ]
+        by_unit = [
+            {"unit": row[0] or "(ohne Einheit)", "count": row[1]}
+            for row in conn.execute(
+                "SELECT unit, COUNT(*) FROM finance_records GROUP BY unit ORDER BY COUNT(*) DESC"
+            ).fetchall()
+        ]
+        row = conn.execute("SELECT MIN(date), MAX(date) FROM finance_records").fetchone()
+        date_min, date_max = (row[0], row[1]) if row else (None, None)
+        row = conn.execute("SELECT MAX(fetched_at) FROM finance_records").fetchone()
+        last_fetched_at = row[0] if row and row[0] else None
+        return {
+            "file_size_bytes": file_size_bytes,
+            "total_records": total_records,
+            "by_country": by_country,
+            "by_label": by_label,
+            "by_unit": by_unit,
+            "date_min": date_min,
+            "date_max": date_max,
+            "last_fetched_at": last_fetched_at,
+        }
     finally:
         conn.close()
 

@@ -23,7 +23,7 @@ docker compose up --build
 - **Frontend:** http://localhost:5173  
 - **Backend-API:** http://localhost:8000 (Dokumentation: http://localhost:8000/docs)
 
-Die SQLite-Datenbank liegt im Ordner `data/` (wird als Volume gemountet). Zum Stoppen: `Ctrl+C` oder `docker compose down`.
+Die SQLite-Datenbank liegt im Ordner `data/` (wird als Volume gemountet). Log-Ausgaben (mit Rotation) in **`data/finix.log`**; Level über Umgebungsvariable `LOG_LEVEL` (z. B. `DEBUG`, `INFO`, `WARNING`). Zum Stoppen: `Ctrl+C` oder `docker compose down`.
 
 ## Ohne Docker: Backend starten
 

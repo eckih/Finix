@@ -10,9 +10,12 @@ US-, Deutschland-, Österreich-, Kanada-, Mexiko-, Schweiz- und Liechtenstein-Fi
 """
 import csv
 import io
+import logging
 import os
 import re
 import requests
+
+log = logging.getLogger(__name__)
 
 # Optional: .env im Projektroot laden (für FRED_API_KEY beim direkten Aufruf)
 try:
@@ -268,8 +271,7 @@ def get_us_historical(limit_treasury: int = 100, limit_fred: int = 100, start_da
                     observation_start=start_date,
                 )
             if series_id == "WRESBAL" and not obs:
-                import sys
-                print(f"[Finix] FRED WRESBAL: keine Daten (series_id=WRESBAL und wresbal). Bitte FRED_API_KEY prüfen.", file=sys.stderr)
+                log.warning("FRED WRESBAL: keine Daten (series_id=WRESBAL und wresbal). Bitte FRED_API_KEY prüfen.")
             if obs:
                 scale = 1.0 / 1000.0 if series_id in ("WDTGAL", "WRESBAL") else 1.0
                 for o in obs:
@@ -280,6 +282,36 @@ def get_us_historical(limit_treasury: int = 100, limit_fred: int = 100, start_da
                         "unit": unit,
                         "label": label,
                     })
+    return records
+
+
+def get_markets_historical(limit_fred: int = 500, start_date: str = None):
+    """
+    Holt historische Kursdaten von FRED: S&P 500 (SP500) und Bitcoin (CBBTCUSD).
+    Speicherung unter country="markets" für die Kurse-Ansicht.
+    """
+    records = []
+    start_date = (start_date or "2020-01-01").strip() or None
+    fred_key = os.environ.get("FRED_API_KEY", "").strip()
+    if not fred_key:
+        return records
+    limit_actual = max(limit_fred, 2500) if start_date else limit_fred
+    for series_id, label, unit in [
+        ("SP500", "S&P 500", "Index"),
+        ("CBBTCUSD", "BTC", "USD"),
+    ]:
+        obs = _get_fred_observations(
+            series_id, fred_key, limit=limit_actual,
+            observation_start=start_date,
+        )
+        for o in obs:
+            records.append({
+                "country": "markets",
+                "date": o["date"],
+                "value": o["value"],
+                "unit": unit,
+                "label": label,
+            })
     return records
 
 

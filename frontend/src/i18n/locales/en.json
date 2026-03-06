@@ -3,6 +3,31 @@
     "title": "Finix",
     "subtitle": "Public finances at a glance – official data (TGA, debt, net financing balance)"
   },
+  "menu": {
+    "finanzen": "Public finances",
+    "kurse": "Prices",
+    "statistik": "Statistics"
+  },
+  "statistik": {
+    "title": "Database statistics",
+    "totalRecords": "Total records",
+    "dbSize": "Database size",
+    "dateRange": "Date range",
+    "lastUpdate": "Last update",
+    "byCountry": "By country",
+    "byLabel": "By indicator/label",
+    "byUnit": "By unit",
+    "country": "Country",
+    "label": "Indicator",
+    "unit": "Unit",
+    "count": "Count"
+  },
+  "kurse": {
+    "title": "Stocks & crypto",
+    "noData": "No price data yet. Click \"Load history (USA)\" on Public finances or \"Load history\" below.",
+    "loadHistory": "Load history",
+    "loadHistoryBusy": "Loading…"
+  },
   "controls": {
     "country": "Country",
     "fetch": "Fetch & save now",
@@ -34,6 +59,10 @@
     "fetchedAt": "Fetched",
     "noEntries": "No entries for this country."
   },
+  "historyProgress": {
+    "title": "History load progress",
+    "waiting": "Connecting."
+  },
   "messages": {
     "historyLoaded": "History loaded – per indicator:",
     "errorCountries": "Could not load countries",
@@ -46,7 +75,9 @@
     "rrp": "RRPONTSYD (Overnight RRP)",
     "wresbal": "WRESBAL (Reserve Balances)",
     "sofr": "SOFR",
-    "effr": "EFFR"
+    "effr": "EFFR",
+    "sp500": "S&P 500",
+    "btc": "BTC"
   },
   "legend": {
     "sourceFred": "Source: FRED – {{label}}"

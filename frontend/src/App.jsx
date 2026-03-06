@@ -89,7 +89,19 @@ export default function App() {
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const [latestVersion, setLatestVersion] = useState(null)
   const [latestReleaseUrl, setLatestReleaseUrl] = useState(null)
+  const [view, setView] = useState('finanzen')
+  const [stats, setStats] = useState(null)
+  const [statsLoading, setStatsLoading] = useState(false)
+  const [marketsHistory, setMarketsHistory] = useState([])
+  const [kurseLoading, setKurseLoading] = useState(false)
+  const [kurseFetchingHistory, setKurseFetchingHistory] = useState(false)
   const locale = i18n.language && i18n.language.startsWith('en') ? 'en-US' : 'de-DE'
+  const formatDate = (dateStr, loc = locale) => {
+    if (!dateStr || typeof dateStr !== 'string') return dateStr ?? '–'
+    const d = new Date(dateStr + (dateStr.length === 10 ? 'T12:00:00Z' : ''))
+    if (Number.isNaN(d.getTime())) return dateStr
+    return d.toLocaleDateString(loc, { day: '2-digit', month: '2-digit', year: 'numeric' })
+  }
   const formatUnit = (unit) => {
     if (!unit || typeof unit !== 'string') return ''
     const u = unit.trim()
@@ -140,6 +152,46 @@ export default function App() {
     loadHistory(selectedCountry)
   }, [selectedCountry, loadHistory])
 
+  const loadMarketsHistory = useCallback(async () => {
+    setKurseLoading(true)
+    setError(null)
+    try {
+      const res = await fetch(`${API}/history?country=markets&limit=3000&min_date=2020-01-01`)
+      if (!res.ok) throw new Error(t('messages.errorHistory'))
+      const data = await res.json()
+      setMarketsHistory(data.data || [])
+    } catch (e) {
+      setError(e.message)
+      setMarketsHistory([])
+    } finally {
+      setKurseLoading(false)
+    }
+  }, [t])
+
+  useEffect(() => {
+    if (view === 'kurse') loadMarketsHistory()
+  }, [view, loadMarketsHistory])
+
+  const loadStats = useCallback(async () => {
+    setStatsLoading(true)
+    setError(null)
+    try {
+      const res = await fetch(`${API}/stats`)
+      if (!res.ok) throw new Error('Statistik konnte nicht geladen werden')
+      const data = await res.json()
+      setStats(data)
+    } catch (e) {
+      setError(e.message)
+      setStats(null)
+    } finally {
+      setStatsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (view === 'statistik') loadStats()
+  }, [view, loadStats])
+
   // Update-Check: aktuelle Version vs. letztes GitHub-Release
   useEffect(() => {
     let cancelled = false
@@ -188,25 +240,82 @@ export default function App() {
   }
 
   const [lastHistoryByLabel, setLastHistoryByLabel] = useState(null)
+  const [historyProgressLog, setHistoryProgressLog] = useState([])
+
+  async function readHistoryStream(res, onLine) {
+    const reader = res.body.getReader()
+    const dec = new TextDecoder()
+    let buf = ''
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop() ?? ''
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed) continue
+        try {
+          const obj = JSON.parse(trimmed)
+          onLine(obj)
+        } catch (_) { /* ignore malformed */ }
+      }
+    }
+    if (buf.trim()) {
+      try {
+        onLine(JSON.parse(buf.trim()))
+      } catch (_) {}
+    }
+  }
 
   const handleFetchUsHistory = async () => {
     setFetchingHistory(true)
     setError(null)
     setLastHistoryByLabel(null)
+    setHistoryProgressLog([])
     try {
-      const res = await fetch(`${API}/fetch/us/history?limit=500&start_date=2020-01-01`, { method: 'POST' })
+      const res = await fetch(`${API}/fetch/us/history/stream?limit=500&start_date=2020-01-01`, { method: 'POST' })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         throw new Error(err.detail || res.statusText)
       }
-      const data = await res.json()
+      await readHistoryStream(res, (obj) => {
+        setHistoryProgressLog((prev) => [...prev, obj])
+        if (obj.type === 'error') setError(obj.message)
+        if (obj.type === 'done') {
+          if (obj.by_label) setLastHistoryByLabel(obj.by_label)
+          setError(null)
+        }
+      })
       await loadHistory('us')
-      if (data.saved != null) setError(null)
-      if (data.by_label) setLastHistoryByLabel(data.by_label)
+      if (view === 'kurse') await loadMarketsHistory()
     } catch (e) {
       setError(e.message)
     } finally {
       setFetchingHistory(false)
+    }
+  }
+
+  const handleKurseLoadHistory = async () => {
+    setKurseFetchingHistory(true)
+    setError(null)
+    setHistoryProgressLog([])
+    try {
+      const res = await fetch(`${API}/fetch/us/history/stream?limit=500&start_date=2020-01-01`, { method: 'POST' })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.detail || res.statusText)
+      }
+      await readHistoryStream(res, (obj) => {
+        setHistoryProgressLog((prev) => [...prev, obj])
+        if (obj.type === 'error') setError(obj.message)
+        if (obj.type === 'done') setError(null)
+      })
+      await loadMarketsHistory()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setKurseFetchingHistory(false)
     }
   }
 
@@ -217,6 +326,8 @@ export default function App() {
   const labelWRESBAL = t('labels.wresbal')
   const labelSOFR = t('labels.sofr')
   const labelEFFR = t('labels.effr')
+  const labelSP500 = t('labels.sp500')
+  const labelBTC = t('labels.btc')
 
   const chartData = (() => {
     if (isUS && history.some((r) => r.label)) {
@@ -265,7 +376,41 @@ export default function App() {
   const yAxisUnit = isUS ? formatUnit('Mrd. USD') : formatUnit(history[0]?.unit) || history[0]?.unit || ''
 
   const [visibleSeries, setVisibleSeries] = useState({ tga: true, wdtgal: true, rrp: true, wresbal: true, sofr: true, effr: true })
+  const [visibleKurseSeries, setVisibleKurseSeries] = useState({ sp500: true, btc: true })
   const toggleSeries = (key) => setVisibleSeries((s) => ({ ...s, [key]: !s[key] }))
+  const toggleKurseSeries = (key) => setVisibleKurseSeries((s) => ({ ...s, [key]: !s[key] }))
+
+  const kurseChartData = (() => {
+    const byLabel = (lbl) => marketsHistory.filter((r) => r.label === lbl).map((r) => ({ date: r.date, value: Number(r.value) }))
+    const sp500 = byLabel(labelSP500)
+    const btc = byLabel(labelBTC)
+    const allDates = [...new Set([...sp500.map((x) => x.date), ...btc.map((x) => x.date)])].filter((d) => d >= '2020-01-01').sort()
+    return allDates.map((date) => {
+      const s = sp500.find((x) => x.date === date)
+      const b = btc.find((x) => x.date === date)
+      return {
+        date,
+        sp500: s != null ? s.value : null,
+        btc: b != null ? b.value : null,
+      }
+    })
+  })()
+  const hasKurseData = kurseChartData.length > 0 && kurseChartData.some((d) => d.sp500 != null || d.btc != null)
+
+  const nKurse = kurseChartData.length
+  const [kurseRangeStart, setKurseRangeStart] = useState(0)
+  const [kurseRangeEnd, setKurseRangeEnd] = useState(0)
+  useEffect(() => {
+    if (nKurse > 0) {
+      setKurseRangeStart(0)
+      setKurseRangeEnd(nKurse - 1)
+    }
+  }, [nKurse])
+  const kurseStartI = nKurse > 0 ? Math.max(0, Math.min(kurseRangeStart, nKurse - 1)) : 0
+  const kurseEndI = nKurse > 0 ? Math.max(0, Math.min(kurseRangeEnd, nKurse - 1)) : 0
+  const kurseLo = Math.min(kurseStartI, kurseEndI)
+  const kurseHi = Math.max(kurseStartI, kurseEndI)
+  const slicedKurseChartData = nKurse > 0 ? kurseChartData.slice(kurseLo, kurseHi + 1) : []
 
   const n = chartData.length
   const [rangeStart, setRangeStart] = useState(0)
@@ -289,6 +434,50 @@ export default function App() {
         <p style={{ margin: '0.25rem 0 0', color: '#555' }}>
           {t('app.subtitle')}
         </p>
+        <nav style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => setView('finanzen')}
+            style={{
+              padding: '0.35rem 0.75rem',
+              border: view === 'finanzen' ? '2px solid #2563eb' : '1px solid #ccc',
+              borderRadius: 6,
+              background: view === 'finanzen' ? '#eff6ff' : '#fff',
+              cursor: 'pointer',
+              fontSize: '0.95rem',
+            }}
+          >
+            {t('menu.finanzen')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setView('kurse')}
+            style={{
+              padding: '0.35rem 0.75rem',
+              border: view === 'kurse' ? '2px solid #2563eb' : '1px solid #ccc',
+              borderRadius: 6,
+              background: view === 'kurse' ? '#eff6ff' : '#fff',
+              cursor: 'pointer',
+              fontSize: '0.95rem',
+            }}
+          >
+            {t('menu.kurse')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setView('statistik')}
+            style={{
+              padding: '0.35rem 0.75rem',
+              border: view === 'statistik' ? '2px solid #2563eb' : '1px solid #ccc',
+              borderRadius: 6,
+              background: view === 'statistik' ? '#eff6ff' : '#fff',
+              cursor: 'pointer',
+              fontSize: '0.95rem',
+            }}
+          >
+            {t('menu.statistik')}
+          </button>
+        </nav>
         <div style={{ marginTop: '0.5rem', fontSize: '0.9rem' }}>
           <button
             type="button"
@@ -320,6 +509,256 @@ export default function App() {
         </div>
       </header>
 
+      {error && view === 'kurse' && (
+        <div role="alert" style={{ padding: '0.75rem', background: '#fef2f2', color: '#b91c1c', borderRadius: '6px', marginBottom: '1rem' }}>
+          {error}
+        </div>
+      )}
+      {view === 'kurse' ? (
+        <>
+          <section className="controls" style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
+            <button
+              onClick={handleKurseLoadHistory}
+              disabled={kurseFetchingHistory}
+              style={{
+                padding: '0.5rem 1rem',
+                fontSize: '1rem',
+                background: kurseFetchingHistory ? '#aaa' : '#059669',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: kurseFetchingHistory ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {kurseFetchingHistory ? t('kurse.loadHistoryBusy') : t('kurse.loadHistory')}
+            </button>
+          </section>
+          {(historyProgressLog.length > 0 || kurseFetchingHistory) && (
+            <section aria-live="polite" style={{ marginBottom: '1.5rem', padding: '0.75rem 1rem', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+              <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', color: '#334155' }}>{t('historyProgress.title')}</h3>
+              <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.9rem', color: '#475569', maxHeight: 160, overflowY: 'auto' }}>
+                {kurseFetchingHistory && historyProgressLog.length === 0 && <li key="wait">{t('historyProgress.waiting')}</li>}
+                {historyProgressLog.map((entry, i) => (
+                  <li key={i} style={{ color: entry.type === 'error' ? '#b91c1c' : entry.type === 'done' ? '#15803d' : undefined, marginBottom: '0.25rem' }}>
+                    {entry.message}
+                    {entry.type === 'done' && entry.saved != null && ` (${entry.saved})`}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {kurseLoading ? (
+            <p>{t('messages.loading')}</p>
+          ) : (
+            <section className="chart" style={{ background: '#fff', padding: '1rem', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', marginBottom: '1.5rem' }}>
+              <h2 style={{ margin: '0 0 1rem', fontSize: '1.1rem' }}>{t('kurse.title')}</h2>
+              {hasKurseData && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center', marginBottom: '0.75rem', fontSize: '0.9rem' }}>
+                  <span style={{ color: '#555', marginRight: '0.25rem' }}>{t('chart.show')}:</span>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={visibleKurseSeries.sp500} onChange={() => toggleKurseSeries('sp500')} />
+                    <span style={{ width: 10, height: 10, backgroundColor: '#2563eb' }} />
+                    <span>{labelSP500}</span>
+                  </label>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={visibleKurseSeries.btc} onChange={() => toggleKurseSeries('btc')} />
+                    <span style={{ width: 10, height: 10, backgroundColor: '#f59e0b' }} />
+                    <span>{labelBTC}</span>
+                  </label>
+                </div>
+              )}
+              {kurseChartData.length > 0 && hasKurseData ? (
+                <>
+                  <ResponsiveContainer width="100%" height={360}>
+                    <LineChart data={slicedKurseChartData.length > 0 ? slicedKurseChartData : kurseChartData} margin={{ top: 5, right: 50, left: 10, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                      <XAxis dataKey="date" tick={{ fontSize: 12 }} tickFormatter={(v) => formatDate(v)} />
+                      <YAxis
+                        yAxisId="left"
+                        tick={{ fontSize: 12 }}
+                        tickFormatter={(v) => v.toLocaleString(locale, { maximumFractionDigits: 0 })}
+                        label={{ value: 'S&P 500', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fontSize: 12 } }}
+                      />
+                      <YAxis
+                        yAxisId="right"
+                        orientation="right"
+                        tick={{ fontSize: 12 }}
+                        tickFormatter={(v) => v.toLocaleString(locale, { maximumFractionDigits: 0 })}
+                        label={{ value: 'BTC (USD)', angle: 90, position: 'insideRight', style: { textAnchor: 'middle', fontSize: 12 } }}
+                      />
+                      <Tooltip
+                        formatter={(value) => [value != null ? Number(value).toLocaleString(locale, { maximumFractionDigits: 2 }) : '–', t('chart.tooltipValue')]}
+                        labelFormatter={(label) => `${t('chart.tooltipDate')}: ${formatDate(label)}`}
+                      />
+                      {visibleKurseSeries.sp500 && <Line type="monotone" dataKey="sp500" name={labelSP500} stroke="#2563eb" strokeWidth={2} dot={false} connectNulls yAxisId="left" />}
+                      {visibleKurseSeries.btc && <Line type="monotone" dataKey="btc" name={labelBTC} stroke="#f59e0b" strokeWidth={2} dot={false} connectNulls yAxisId="right" />}
+                    </LineChart>
+                  </ResponsiveContainer>
+                  {nKurse > 1 && (
+                    <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid #eee' }}>
+                      <div style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.5rem' }}>{t('chart.period')}</div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '1rem' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: '160px' }}>
+                          <span>{t('chart.from')}:</span>
+                          <input
+                            type="range"
+                            min={0}
+                            max={nKurse - 1}
+                            value={kurseLo}
+                            onChange={(e) => {
+                              const v = Number(e.target.value)
+                              setKurseRangeStart(v)
+                              if (v > kurseEndI) setKurseRangeEnd(v)
+                            }}
+                            style={{ flex: 1, minWidth: 80 }}
+                          />
+                          <span style={{ fontVariantNumeric: 'tabular-nums', width: 95 }}>{formatDate(kurseChartData[kurseLo]?.date)}</span>
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: '160px' }}>
+                          <span>{t('chart.to')}:</span>
+                          <input
+                            type="range"
+                            min={0}
+                            max={nKurse - 1}
+                            value={kurseHi}
+                            onChange={(e) => {
+                              const v = Number(e.target.value)
+                              setKurseRangeEnd(v)
+                              if (v < kurseStartI) setKurseRangeStart(v)
+                            }}
+                            style={{ flex: 1, minWidth: 80 }}
+                          />
+                          <span style={{ fontVariantNumeric: 'tabular-nums', width: 95 }}>{formatDate(kurseChartData[kurseHi]?.date)}</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => { setKurseRangeStart(0); setKurseRangeEnd(nKurse - 1) }}
+                          style={{ padding: '0.35rem 0.6rem', fontSize: '0.85rem', background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: 4, cursor: 'pointer' }}
+                        >
+                          {t('chart.fullRange')}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p style={{ color: '#666' }}>{t('kurse.noData')}</p>
+              )}
+            </section>
+          )}
+        </>
+      ) : view === 'statistik' ? (
+        <>
+      {error && (
+        <div role="alert" style={{ padding: '0.75rem', background: '#fef2f2', color: '#b91c1c', borderRadius: '6px', marginBottom: '1rem' }}>
+          {error}
+        </div>
+      )}
+      <section style={{ background: '#fff', padding: '1rem', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', marginBottom: '1.5rem' }}>
+        <h2 style={{ margin: '0 0 1rem', fontSize: '1.1rem' }}>{t('statistik.title')}</h2>
+        {statsLoading ? (
+          <p>{t('messages.loading')}</p>
+        ) : stats ? (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+              <div style={{ padding: '1rem', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: 4 }}>{t('statistik.totalRecords')}</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 600 }}>{Number(stats.total_records).toLocaleString(locale)}</div>
+              </div>
+              <div style={{ padding: '1rem', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: 4 }}>{t('statistik.dbSize')}</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 600 }}>
+                  {(stats.file_size_bytes / (1024 * 1024)).toLocaleString(locale, { maximumFractionDigits: 2 })} MB
+                </div>
+              </div>
+              {stats.date_min && (
+                <div style={{ padding: '1rem', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                  <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: 4 }}>{t('statistik.dateRange')}</div>
+                  <div style={{ fontSize: '1rem', fontWeight: 500 }}>{stats.date_min} – {stats.date_max}</div>
+                </div>
+              )}
+              {stats.last_fetched_at && (
+                <div style={{ padding: '1rem', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                  <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: 4 }}>{t('statistik.lastUpdate')}</div>
+                  <div style={{ fontSize: '0.95rem' }}>{stats.last_fetched_at}</div>
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.5rem' }}>
+              <div>
+                <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>{t('statistik.byCountry')}</h3>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
+                      <th style={{ textAlign: 'left', padding: '0.5rem' }}>{t('statistik.country')}</th>
+                      <th style={{ textAlign: 'right', padding: '0.5rem' }}>{t('statistik.count')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(stats.by_country || []).map((row, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '0.5rem' }}>{row.country}</td>
+                        <td style={{ textAlign: 'right', padding: '0.5rem' }}>{Number(row.count).toLocaleString(locale)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div>
+                <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>{t('statistik.byLabel')}</h3>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
+                      <th style={{ textAlign: 'left', padding: '0.5rem' }}>{t('statistik.label')}</th>
+                      <th style={{ textAlign: 'right', padding: '0.5rem' }}>{t('statistik.count')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(stats.by_label || []).slice(0, 15).map((row, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '0.5rem' }}>{row.label}</td>
+                        <td style={{ textAlign: 'right', padding: '0.5rem' }}>{Number(row.count).toLocaleString(locale)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div>
+                <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>{t('statistik.byUnit')}</h3>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
+                      <th style={{ textAlign: 'left', padding: '0.5rem' }}>{t('statistik.unit')}</th>
+                      <th style={{ textAlign: 'right', padding: '0.5rem' }}>{t('statistik.count')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(stats.by_unit || []).map((row, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '0.5rem' }}>{row.unit}</td>
+                        <td style={{ textAlign: 'right', padding: '0.5rem' }}>{Number(row.count).toLocaleString(locale)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        ) : null}
+      </section>
+        </>
+      ) : (
+        <>
+      {error && (
+        <div role="alert" style={{ padding: '0.75rem', background: '#fef2f2', color: '#b91c1c', borderRadius: '6px', marginBottom: '1rem' }}>
+          {error}
+        </div>
+      )}
+      {lastHistoryByLabel && Object.keys(lastHistoryByLabel).length > 0 && (
+        <div style={{ padding: '0.75rem', background: '#f0fdf4', color: '#166534', borderRadius: '6px', marginBottom: '1rem', fontSize: '0.9rem' }}>
+          {t('messages.historyLoaded')} {Object.entries(lastHistoryByLabel).map(([lbl, n]) => `${lbl}: ${n}`).join(', ')}
+        </div>
+      )}
       <section className="controls" style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
         <label>
           {t('controls.country')}:{' '}
@@ -373,7 +812,6 @@ export default function App() {
             type="button"
             onClick={() => {
               window.open(latestReleaseUrl, '_blank', 'noopener,noreferrer')
-              // Kurze Anleitung anzeigen
               alert(t('controls.updateInstructions'))
             }}
             title={t('controls.updateAvailable', { version: latestVersion || '' })}
@@ -391,16 +829,19 @@ export default function App() {
           </button>
         )}
       </section>
-
-      {error && (
-        <div role="alert" style={{ padding: '0.75rem', background: '#fef2f2', color: '#b91c1c', borderRadius: '6px', marginBottom: '1rem' }}>
-          {error}
-        </div>
-      )}
-      {lastHistoryByLabel && Object.keys(lastHistoryByLabel).length > 0 && (
-        <div style={{ padding: '0.75rem', background: '#f0fdf4', color: '#166534', borderRadius: '6px', marginBottom: '1rem', fontSize: '0.9rem' }}>
-          {t('messages.historyLoaded')} {Object.entries(lastHistoryByLabel).map(([lbl, n]) => `${lbl}: ${n}`).join(', ')}
-        </div>
+      {(historyProgressLog.length > 0 || fetchingHistory) && view === 'finanzen' && (
+        <section aria-live="polite" style={{ marginBottom: '1.5rem', padding: '0.75rem 1rem', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+          <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', color: '#334155' }}>{t('historyProgress.title')}</h3>
+          <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.9rem', color: '#475569', maxHeight: 160, overflowY: 'auto' }}>
+            {fetchingHistory && historyProgressLog.length === 0 && <li key="wait">{t('historyProgress.waiting')}</li>}
+            {historyProgressLog.map((entry, i) => (
+              <li key={i} style={{ color: entry.type === 'error' ? '#b91c1c' : entry.type === 'done' ? '#15803d' : undefined, marginBottom: '0.25rem' }}>
+                {entry.message}
+                {entry.type === 'done' && entry.saved != null && ` (${entry.saved})`}
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       {loading ? (
@@ -449,7 +890,7 @@ export default function App() {
                 <ResponsiveContainer width="100%" height={320}>
                   <LineChart data={slicedChartData.length > 0 ? slicedChartData : chartData} margin={{ top: 5, right: 50, left: 10, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-                    <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                    <XAxis dataKey="date" tick={{ fontSize: 12 }} tickFormatter={(v) => formatDate(v)} />
                     <YAxis
                       yAxisId="left"
                       tick={{ fontSize: 12 }}
@@ -465,7 +906,7 @@ export default function App() {
                     />
                     <Tooltip
                       formatter={(value) => [value != null ? Number(value).toLocaleString(locale, { maximumFractionDigits: 2 }) : '–', t('chart.tooltipValue')]}
-                      labelFormatter={(label) => `${t('chart.tooltipDate')}: ${label}`}
+                      labelFormatter={(label) => `${t('chart.tooltipDate')}: ${formatDate(label)}`}
                     />
                     <Legend content={<LegendWithLinks />} />
                     {hasMultiSeries ? (
@@ -500,7 +941,7 @@ export default function App() {
                           }}
                           style={{ flex: 1, minWidth: 80 }}
                         />
-                        <span style={{ fontVariantNumeric: 'tabular-nums', width: 95 }}>{chartData[lo]?.date ?? '–'}</span>
+                        <span style={{ fontVariantNumeric: 'tabular-nums', width: 95 }}>{formatDate(chartData[lo]?.date)}</span>
                       </label>
                       <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: '160px' }}>
                         <span>{t('chart.to')}:</span>
@@ -516,7 +957,7 @@ export default function App() {
                           }}
                           style={{ flex: 1, minWidth: 80 }}
                         />
-                        <span style={{ fontVariantNumeric: 'tabular-nums', width: 95 }}>{chartData[hi]?.date ?? '–'}</span>
+                        <span style={{ fontVariantNumeric: 'tabular-nums', width: 95 }}>{formatDate(chartData[hi]?.date)}</span>
                       </label>
                       <button
                         type="button"
@@ -550,7 +991,7 @@ export default function App() {
                 <tbody>
                   {history.slice(0, 30).map((r, i) => (
                     <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
-                      <td style={{ padding: '0.5rem' }}>{r.date}</td>
+                      <td style={{ padding: '0.5rem' }}>{formatDate(r.date)}</td>
                       {isUS && <td style={{ padding: '0.5rem', color: '#555' }}>{r.label || '–'}</td>}
                       <td style={{ padding: '0.5rem' }}>{Number(r.value).toLocaleString(locale, { maximumFractionDigits: 2 })}</td>
                       <td style={{ padding: '0.5rem' }}>{formatUnit(r.unit) || r.unit}</td>
@@ -563,6 +1004,8 @@ export default function App() {
               <p style={{ color: '#666' }}>{t('table.noEntries')}</p>
             )}
           </section>
+        </>
+      )}
         </>
       )}
     </div>
