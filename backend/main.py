@@ -652,8 +652,11 @@ class AIAskBody(BaseModel):
     question: str
     title: str = ""
     summary: str = ""
+    url: str = ""
+    time_published: str = ""
     model: str | None = None
     stream: bool = False
+    force_refresh: bool = False
 
 
 def _stream_lm_studio_ask(question: str, title: str, summary: str, model_override: str | None):
@@ -745,23 +748,39 @@ async def get_ai_test(model: str | None = Query(None, description="Modell-ID fü
 
 @app.post("/api/ai/ask")
 async def post_ai_ask(body: AIAskBody):
-    """Stellt eine Frage an das gewählte Modell (Gemini, Sonnet oder LM Studio). Bei LM Studio und stream=true: NDJSON-Stream."""
-    log.info("App: AI-Anfrage question=%s model=%s stream=%s", (body.question or "")[:80], body.model or "(default)", body.stream)
+    """Stellt eine Frage an das gewählte Modell. Bei News-Kontext: Antwort aus DB wenn vorhanden, sonst AI aufrufen und speichern. force_refresh=True ignoriert Cache."""
+    import persist
+    question = (body.question or "").strip()
+    title = (body.title or "").strip()
+    url = (body.url or "").strip()
+    time_published = (body.time_published or "").strip()
+    use_cache = not body.stream and (url or (time_published and title))
+    news_key = persist._ai_news_key(url, time_published, title) if use_cache else ""
+    question_key = persist._ai_question_key(question) if question else ""
+
+    if use_cache and news_key and question_key and not body.force_refresh:
+        cached = persist.get_ai_news_answer(news_key, question_key)
+        if cached is not None:
+            answer_cached, model_cached = cached
+            log.info("App: AI-Antwort aus Cache (news_key=%s)", news_key[:8])
+            return {"answer": answer_cached, "from_cache": True, "model": model_cached or ""}
+
+    log.info("App: AI-Anfrage question=%s model=%s stream=%s", question[:80], body.model or "(default)", body.stream)
     if _is_gemini_model(body.model):
         answer, err = await asyncio.to_thread(
             _ask_gemini, body.question, body.title or "", body.summary or "", body.model
         )
         if err:
             raise HTTPException(status_code=502, detail=err)
-        return {"answer": answer or ""}
-    if _is_sonnet_model(body.model):
+        answer = answer or ""
+    elif _is_sonnet_model(body.model):
         answer, err = await asyncio.to_thread(
             _ask_anthropic, body.question, body.title or "", body.summary or "", body.model
         )
         if err:
             raise HTTPException(status_code=502, detail=err)
-        return {"answer": answer or ""}
-    if body.stream:
+        answer = answer or ""
+    elif body.stream:
         def gen():
             for line in _stream_lm_studio_ask(
                 body.question or "",
@@ -775,12 +794,17 @@ async def post_ai_ask(body: AIAskBody):
             media_type="application/x-ndjson",
             headers={"Cache-Control": "no-store"},
         )
-    answer, err = await asyncio.to_thread(
-        _ask_lm_studio, body.question, body.title or "", body.summary or "", body.model
-    )
-    if err:
-        raise HTTPException(status_code=502, detail=err)
-    return {"answer": answer or ""}
+    else:
+        answer, err = await asyncio.to_thread(
+            _ask_lm_studio, body.question, body.title or "", body.summary or "", body.model
+        )
+        if err:
+            raise HTTPException(status_code=502, detail=err)
+        answer = answer or ""
+
+    if use_cache and news_key and question_key and answer:
+        persist.save_ai_news_answer(news_key, question_key, question, answer, body.model or "")
+    return {"answer": answer, "from_cache": False, "model": body.model or ""}
 
 
 NEWS_CACHE_SEC = 300  # 5 Min. – API nur alle 5 Min. pro Symbol aufrufen
@@ -1354,6 +1378,21 @@ def get_translate(
 
 
 # ---------- AI-Standardfragen (News-Dropdown, konfigurierbar) ----------
+@app.get("/api/ai-answers-cache")
+def get_ai_answers_cache(
+    url: str = Query("", description="URL der News"),
+    time_published: str = Query("", description="time_published der News"),
+    title: str = Query("", description="Titel der News (Fallback für news_key)"),
+):
+    """Gecachte AI-Antworten zu einer News abrufen (für Anzeige im Dropdown: welche Fragen sind im Cache, welches Modell)."""
+    import persist
+    news_key = persist._ai_news_key((url or "").strip(), (time_published or "").strip(), (title or "").strip())
+    if not news_key:
+        return {"questions": []}
+    questions = persist.get_ai_news_answers_by_news_key(news_key)
+    return {"questions": questions}
+
+
 @app.get("/api/ai-questions")
 def get_ai_questions(lang: str = Query(None, description="Sprache (de/en) für Dropdown; fehlt = alle für Konfiguration")):
     """Fragen in einer Sprache (für News-Dropdown) oder alle mit text_de/text_en (für Konfiguration)."""

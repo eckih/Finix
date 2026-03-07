@@ -75,6 +75,8 @@
     "aiCustomPrompt": "Custom question …",
     "aiAsk": "Ask",
     "aiLoading": "Loading…",
+    "aiFromCache": "From cache.",
+    "aiRefresh": "Refresh",
     "noNewsForSymbol": "No news for \"{{symbol}}\". Try another symbol (e.g. AAPL, TSLA).",
     "noNewsDefault": "API returned no entries. Enter a symbol (e.g. TSLA, AAPL) and refresh.",
     "aiModel": "Model",

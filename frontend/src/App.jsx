@@ -100,6 +100,7 @@ export default function App() {
   const [newsAiOpenIndex, setNewsAiOpenIndex] = useState(null)
   const [newsAiLoadingIndex, setNewsAiLoadingIndex] = useState(null)
   const [newsAiResponseByIndex, setNewsAiResponseByIndex] = useState({})
+  const [aiCacheStatusByIndex, setAiCacheStatusByIndex] = useState({})
   const [newsAiCustomPrompt, setNewsAiCustomPrompt] = useState('')
   const [newsTranslations, setNewsTranslations] = useState({})
   const [newsAiTestLoading, setNewsAiTestLoading] = useState(false)
@@ -209,6 +210,16 @@ export default function App() {
   useEffect(() => {
     if (view === 'konfiguration') loadAiQuestionsConfig()
   }, [view, loadAiQuestionsConfig])
+
+  useEffect(() => {
+    if (newsAiOpenIndex == null || !Array.isArray(newsFeed) || !newsFeed[newsAiOpenIndex]) return
+    const item = newsFeed[newsAiOpenIndex]
+    const params = new URLSearchParams({ url: item.url || '', time_published: item.time_published || '', title: item.title || '' })
+    fetch(`${API}/ai-answers-cache?${params}`)
+      .then((r) => r.json())
+      .then((data) => setAiCacheStatusByIndex((prev) => ({ ...prev, [newsAiOpenIndex]: data.questions || [] })))
+      .catch(() => {})
+  }, [newsAiOpenIndex, newsFeed])
 
   const loadAdminTables = useCallback(async () => {
     try {
@@ -349,12 +360,12 @@ export default function App() {
     }
   }, [newsAiTestPrompt, newsAiSelectedModel])
 
-  const askAi = useCallback(async (index, question, title, summary) => {
+  const askAi = useCallback(async (index, question, title, summary, url, timePublished, forceRefresh = false) => {
     if (!(question || '').trim()) return
     setNewsAiLoadingIndex(index)
-    setNewsAiResponseByIndex((prev) => ({ ...prev, [index]: null }))
+    if (!forceRefresh) setNewsAiResponseByIndex((prev) => ({ ...prev, [index]: null }))
     try {
-      const body = { question: (question || '').trim(), title: title || '', summary: summary || '' }
+      const body = { question: (question || '').trim(), title: title || '', summary: summary || '', url: url || '', time_published: timePublished || '', force_refresh: !!forceRefresh }
       if (newsAiSelectedModel) body.model = newsAiSelectedModel
       const res = await fetch(`${API}/ai/ask`, {
         method: 'POST',
@@ -366,7 +377,17 @@ export default function App() {
         setNewsAiResponseByIndex((prev) => ({ ...prev, [index]: { question: (question || '').trim(), error: data.detail || res.statusText } }))
         return
       }
-      setNewsAiResponseByIndex((prev) => ({ ...prev, [index]: { question: (question || '').trim(), answer: data.answer || '' } }))
+      setNewsAiResponseByIndex((prev) => ({ ...prev, [index]: { question: (question || '').trim(), answer: data.answer || '', from_cache: !!data.from_cache, model: data.model || '' } }))
+      if (data.answer != null && (data.from_cache || data.model)) {
+        const qText = (question || '').trim()
+        setAiCacheStatusByIndex((prev) => {
+          const list = prev[index] || []
+          const idx = list.findIndex((c) => (c.question_text || '').trim() === qText)
+          const entry = { question_text: qText, model: data.model || '' }
+          if (idx >= 0) return { ...prev, [index]: list.map((c, i) => (i === idx ? entry : c)) }
+          return { ...prev, [index]: [...list, entry] }
+        })
+      }
     } catch (e) {
       setNewsAiResponseByIndex((prev) => ({ ...prev, [index]: { question: (question || '').trim(), error: e.message } }))
     } finally {
@@ -1660,6 +1681,11 @@ export default function App() {
                   <div data-ai-dropdown style={{ position: 'relative', marginTop: '0.75rem' }}>
                     <button
                       type="button"
+                      title={(() => {
+                        const m = newsAiSelectedModel
+                        const names = { 'gemini-2.5-flash': t('config.gemini25Flash'), 'gemini-2.5-pro': t('config.gemini25Pro'), 'claude-sonnet-4-6': t('config.sonnet46') }
+                        return t('news.aiModel') + ': ' + (m ? (names[m] || m) : t('news.aiNoModels'))
+                      })()}
                       onClick={(e) => { e.stopPropagation(); setNewsAiOpenIndex((prev) => (prev === i ? null : i)) }}
                       style={{
                         padding: '0.35rem 0.6rem',
@@ -1690,30 +1716,40 @@ export default function App() {
                           zIndex: 10,
                         }}
                       >
-                        {(aiPresetQuestions.length ? aiPresetQuestions : [{ key: 'stocks', text: t('news.aiQuestionStocks') }, { key: 'btc', text: t('news.aiQuestionBtc') }]).map((q) => (
-                          <button
-                            key={q.key}
-                            type="button"
-                            role="menuitem"
-                            onClick={() => askAi(i, q.text, item.title, item.summary)}
-                            disabled={newsAiLoadingIndex === i}
-                            style={{ display: 'block', width: '100%', padding: '0.5rem 0.75rem', textAlign: 'left', border: 'none', background: 'none', cursor: newsAiLoadingIndex === i ? 'wait' : 'pointer', fontSize: '0.9rem' }}
-                          >
-                            {q.text}
-                          </button>
-                        ))}
+                        {(aiPresetQuestions.length ? aiPresetQuestions : [{ key: 'stocks', text: t('news.aiQuestionStocks') }, { key: 'btc', text: t('news.aiQuestionBtc') }]).map((q) => {
+                          const cacheEntry = (aiCacheStatusByIndex[i] || []).find((c) => (c.question_text || '').trim() === (q.text || '').trim())
+                          const modelNames = { 'gemini-2.5-flash': t('config.gemini25Flash'), 'gemini-2.5-pro': t('config.gemini25Pro'), 'claude-sonnet-4-6': t('config.sonnet46') }
+                          const modelLabel = cacheEntry?.model ? (modelNames[cacheEntry.model] || cacheEntry.model) : ''
+                          return (
+                            <button
+                              key={q.key}
+                              type="button"
+                              role="menuitem"
+                              onClick={() => askAi(i, q.text, item.title, item.summary, item.url, item.time_published)}
+                              disabled={newsAiLoadingIndex === i}
+                              style={{ display: 'block', width: '100%', padding: '0.5rem 0.75rem', textAlign: 'left', border: 'none', background: 'none', cursor: newsAiLoadingIndex === i ? 'wait' : 'pointer', fontSize: '0.9rem' }}
+                            >
+                              <span style={{ display: 'block' }}>{q.text}</span>
+                              {cacheEntry && (
+                                <span style={{ display: 'block', fontSize: '0.75rem', color: '#0ea5e9', marginTop: '0.2rem' }} title={t('news.aiModel') + ': ' + modelLabel}>
+                                  {t('news.aiFromCache')}{modelLabel ? ` · ${modelLabel}` : ''}
+                                </span>
+                              )}
+                            </button>
+                          )
+                        })}
                         <div style={{ padding: '0.5rem 0.75rem', borderTop: '1px solid #e2e8f0', display: 'flex', gap: 4 }}>
                           <input
                             type="text"
                             placeholder={t('news.aiCustomPrompt')}
                             value={newsAiCustomPrompt}
                             onChange={(e) => setNewsAiCustomPrompt(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === 'Enter') askAi(i, newsAiCustomPrompt, item.title, item.summary) }}
+                            onKeyDown={(e) => { if (e.key === 'Enter') askAi(i, newsAiCustomPrompt, item.title, item.summary, item.url, item.time_published) }}
                             style={{ flex: 1, padding: '0.4rem 0.5rem', fontSize: '0.9rem', border: '1px solid #e2e8f0', borderRadius: 6, boxSizing: 'border-box' }}
                           />
                           <button
                             type="button"
-                            onClick={() => askAi(i, newsAiCustomPrompt, item.title, item.summary)}
+                            onClick={() => askAi(i, newsAiCustomPrompt, item.title, item.summary, item.url, item.time_published)}
                             disabled={newsAiLoadingIndex === i}
                             style={{ padding: '0.4rem 0.6rem', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
                           >
@@ -1725,15 +1761,30 @@ export default function App() {
                             {t('news.aiLoading')}
                           </div>
                         )}
-                        {newsAiResponseByIndex[i] && newsAiLoadingIndex !== i && (
-                          <div style={{ padding: '0.5rem 0.75rem', borderTop: '1px solid #e2e8f0', fontSize: '0.85rem', maxHeight: 200, overflow: 'auto' }}>
-                            {newsAiResponseByIndex[i].error ? (
-                              <p style={{ margin: 0, color: '#b91c1c' }}>{newsAiResponseByIndex[i].error}</p>
-                            ) : (
-                              <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{newsAiResponseByIndex[i].answer}</p>
-                            )}
-                          </div>
-                        )}
+                        {newsAiResponseByIndex[i] && newsAiLoadingIndex !== i && (() => {
+                          const res = newsAiResponseByIndex[i]
+                          const modelId = res.model || ''
+                          const modelNames = { 'gemini-2.5-flash': t('config.gemini25Flash'), 'gemini-2.5-pro': t('config.gemini25Pro'), 'claude-sonnet-4-6': t('config.sonnet46') }
+                          const modelLabel = modelNames[modelId] || modelId
+                          const tooltipModel = modelLabel ? (t('news.aiModel') + ': ' + modelLabel) : ''
+                          const tooltip = res.from_cache ? (t('news.aiFromCache') + ' · ' + tooltipModel) : tooltipModel
+                          return (
+                            <div title={tooltip} style={{ padding: '0.5rem 0.75rem', borderTop: '1px solid #e2e8f0', fontSize: '0.85rem', maxHeight: 200, overflow: 'auto', ...(res.from_cache ? { background: '#f0f9ff', borderLeft: '3px solid #0ea5e9', marginLeft: 0 } : {}) }}>
+                              {res.error ? (
+                                <p style={{ margin: 0, color: '#b91c1c' }}>{res.error}</p>
+                              ) : (
+                                <>
+                                  <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{res.answer}</p>
+                                  <p style={{ margin: '0.5rem 0 0', fontSize: '0.75rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                    {res.from_cache && <span style={{ background: '#0ea5e9', color: '#fff', padding: '0.1rem 0.35rem', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600 }}>{t('news.aiFromCache')}</span>}
+                                    {modelLabel && <span title={tooltipModel} style={{ cursor: 'help' }}>{t('news.aiModel')}: {modelLabel}</span>}
+                                    <button type="button" onClick={() => askAi(i, res.question, item.title, item.summary, item.url, item.time_published, true)} style={{ padding: '0.1rem 0.35rem', fontSize: '0.75rem', background: 'none', border: '1px solid #94a3b8', borderRadius: 4, color: '#475569', cursor: 'pointer' }}>{t('news.aiRefresh')}</button>
+                                  </p>
+                                </>
+                              )}
+                            </div>
+                          )
+                        })()}
                       </div>
                     )}
                   </div>

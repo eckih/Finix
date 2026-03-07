@@ -6,6 +6,7 @@ Persistenz der abgefragten Finanzdaten in SQLite3.
 - export_csv: exportiert alle Einträge als CSV (z. B. für Excel)
 """
 import csv
+import hashlib
 import json
 import logging
 import sqlite3
@@ -172,6 +173,93 @@ def save_ai_preset_questions(questions: list) -> bool:
     except Exception as e:
         _log.warning("save_ai_preset_questions: %s", e)
         return False
+    finally:
+        conn.close()
+
+
+def _ai_news_key(url: str, time_published: str, title: str) -> str:
+    """Eindeutiger Schlüssel für eine News-Meldung (für AI-Antwort-Cache)."""
+    u = (url or "").strip()
+    if u:
+        return hashlib.sha256(u.encode("utf-8")).hexdigest()[:32]
+    t = (time_published or "").strip()
+    tit = (title or "").strip()
+    raw = f"{t}|{tit}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def _ai_question_key(question: str) -> str:
+    """Hash der Frage für DB-Schlüssel."""
+    q = (question or "").strip()
+    return hashlib.sha256(q.encode("utf-8")).hexdigest()[:32]
+
+
+def init_ai_news_answers_table(db_path: str = None) -> None:
+    """Tabelle für zwischengespeicherte AI-Antworten zu News-Fragen."""
+    _ensure_data_dir()
+    path = db_path or str(DB_PATH)
+    conn = sqlite3.connect(path)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ai_news_answers (
+            news_key TEXT NOT NULL,
+            question_key TEXT NOT NULL,
+            question_text TEXT,
+            answer TEXT NOT NULL,
+            model TEXT,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (news_key, question_key)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def get_ai_news_answers_by_news_key(news_key: str) -> list[dict]:
+    """Alle gecachten AI-Antworten zu einer News (für Anzeige im Dropdown). Liste von { question_text, model }."""
+    if not DB_PATH.exists() or not news_key:
+        return []
+    init_ai_news_answers_table()
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT question_text, model FROM ai_news_answers WHERE news_key = ?",
+            (news_key,),
+        ).fetchall()
+        return [{"question_text": (r[0] or "").strip(), "model": r[1] or ""} for r in rows]
+    finally:
+        conn.close()
+
+
+def get_ai_news_answer(news_key: str, question_key: str) -> tuple[str, str | None] | None:
+    """Gespeicherte AI-Antwort zu einer News+Frage abrufen. (answer, model) oder None."""
+    if not DB_PATH.exists() or not (news_key and question_key):
+        return None
+    init_ai_news_answers_table()
+    conn = _get_conn()
+    try:
+        row = conn.execute(
+            "SELECT answer, model FROM ai_news_answers WHERE news_key = ? AND question_key = ?",
+            (news_key, question_key),
+        ).fetchone()
+        return (row[0], row[1] if row and len(row) > 1 else None) if row else None
+    finally:
+        conn.close()
+
+
+def save_ai_news_answer(news_key: str, question_key: str, question_text: str, answer: str, model: str = None) -> None:
+    """AI-Antwort für News+Frage speichern (überschreibt bei gleichem Schlüssel)."""
+    if not DB_PATH.exists() or not news_key or not question_key:
+        return
+    init_ai_news_answers_table()
+    ts = datetime.utcnow().isoformat() + "Z"
+    conn = _get_conn()
+    try:
+        conn.execute(
+            """INSERT OR REPLACE INTO ai_news_answers (news_key, question_key, question_text, answer, model, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (news_key, question_key, (question_text or "")[:2000], (answer or "").strip(), (model or "").strip() or None, ts),
+        )
+        conn.commit()
     finally:
         conn.close()
 
