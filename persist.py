@@ -195,7 +195,7 @@ def _ai_question_key(question: str) -> str:
 
 
 def init_ai_news_answers_table(db_path: str = None) -> None:
-    """Tabelle für zwischengespeicherte AI-Antworten zu News-Fragen."""
+    """Tabelle für zwischengespeicherte AI-Antworten zu News-Fragen (pro Sprache: lang)."""
     _ensure_data_dir()
     path = db_path or str(DB_PATH)
     conn = sqlite3.connect(path)
@@ -203,63 +203,116 @@ def init_ai_news_answers_table(db_path: str = None) -> None:
         CREATE TABLE IF NOT EXISTS ai_news_answers (
             news_key TEXT NOT NULL,
             question_key TEXT NOT NULL,
+            lang TEXT NOT NULL DEFAULT 'de',
             question_text TEXT,
             answer TEXT NOT NULL,
             model TEXT,
             created_at TEXT NOT NULL,
-            PRIMARY KEY (news_key, question_key)
+            PRIMARY KEY (news_key, question_key, lang)
         )
     """)
     conn.commit()
+    # Migration: Falls Tabelle ohne lang existiert (alte Struktur), Daten übernehmen
+    try:
+        cur = conn.execute("PRAGMA table_info(ai_news_answers)")
+        cols = [row[1] for row in cur.fetchall()]
+        if "lang" not in cols:
+            conn.execute("ALTER TABLE ai_news_answers RENAME TO ai_news_answers_old")
+            conn.execute("""
+                CREATE TABLE ai_news_answers (
+                    news_key TEXT NOT NULL,
+                    question_key TEXT NOT NULL,
+                    lang TEXT NOT NULL DEFAULT 'de',
+                    question_text TEXT,
+                    answer TEXT NOT NULL,
+                    model TEXT,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (news_key, question_key, lang)
+                )
+            """)
+            conn.execute(
+                """INSERT INTO ai_news_answers (news_key, question_key, lang, question_text, answer, model, created_at)
+                   SELECT news_key, question_key, 'de', question_text, answer, model, created_at FROM ai_news_answers_old"""
+            )
+            conn.execute("DROP TABLE ai_news_answers_old")
+            conn.commit()
+    except Exception:
+        pass
     conn.close()
 
 
-def get_ai_news_answers_by_news_key(news_key: str) -> list[dict]:
-    """Alle gecachten AI-Antworten zu einer News (für Anzeige im Dropdown). Liste von { question_text, model }."""
+def get_ai_news_answers_by_news_key(news_key: str, lang: str = "de") -> list[dict]:
+    """Gecachte AI-Antworten zu einer News für die angegebene Sprache. Liste von { question_text, model }."""
     if not DB_PATH.exists() or not news_key:
         return []
     init_ai_news_answers_table()
+    lang_key = (lang or "de").strip().lower()[:2]
+    if lang_key not in ("de", "en"):
+        lang_key = "de"
     conn = _get_conn()
     try:
         rows = conn.execute(
-            "SELECT question_text, model FROM ai_news_answers WHERE news_key = ?",
-            (news_key,),
+            "SELECT question_text, model FROM ai_news_answers WHERE news_key = ? AND lang = ?",
+            (news_key, lang_key),
         ).fetchall()
         return [{"question_text": (r[0] or "").strip(), "model": r[1] or ""} for r in rows]
     finally:
         conn.close()
 
 
-def get_ai_news_answer(news_key: str, question_key: str) -> tuple[str, str | None] | None:
-    """Gespeicherte AI-Antwort zu einer News+Frage abrufen. (answer, model) oder None."""
+def get_ai_news_answer(news_key: str, question_key: str, lang: str = "de") -> tuple[str, str | None] | None:
+    """Gespeicherte AI-Antwort zu einer News+Frage+Sprache. (answer, model) oder None."""
     if not DB_PATH.exists() or not (news_key and question_key):
         return None
     init_ai_news_answers_table()
+    lang_key = (lang or "de").strip().lower()[:2]
+    if lang_key not in ("de", "en"):
+        lang_key = "de"
     conn = _get_conn()
     try:
         row = conn.execute(
-            "SELECT answer, model FROM ai_news_answers WHERE news_key = ? AND question_key = ?",
-            (news_key, question_key),
+            "SELECT answer, model FROM ai_news_answers WHERE news_key = ? AND question_key = ? AND lang = ?",
+            (news_key, question_key, lang_key),
         ).fetchone()
         return (row[0], row[1] if row and len(row) > 1 else None) if row else None
     finally:
         conn.close()
 
 
-def save_ai_news_answer(news_key: str, question_key: str, question_text: str, answer: str, model: str = None) -> None:
-    """AI-Antwort für News+Frage speichern (überschreibt bei gleichem Schlüssel)."""
+def save_ai_news_answer(news_key: str, question_key: str, question_text: str, answer: str, model: str = None, lang: str = "de") -> None:
+    """AI-Antwort für News+Frage+Sprache speichern (überschreibt bei gleichem Schlüssel)."""
     if not DB_PATH.exists() or not news_key or not question_key:
         return
     init_ai_news_answers_table()
+    lang_key = (lang or "de").strip().lower()[:2]
+    if lang_key not in ("de", "en"):
+        lang_key = "de"
     ts = datetime.utcnow().isoformat() + "Z"
     conn = _get_conn()
     try:
         conn.execute(
-            """INSERT OR REPLACE INTO ai_news_answers (news_key, question_key, question_text, answer, model, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (news_key, question_key, (question_text or "")[:2000], (answer or "").strip(), (model or "").strip() or None, ts),
+            """INSERT OR REPLACE INTO ai_news_answers (news_key, question_key, lang, question_text, answer, model, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (news_key, question_key, lang_key, (question_text or "")[:2000], (answer or "").strip(), (model or "").strip() or None, ts),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_ai_news_answer(news_key: str, question_key: str) -> bool:
+    """Gecachte AI-Antwort löschen (alle Sprachen). True wenn mindestens eine Zeile gelöscht wurde."""
+    if not DB_PATH.exists() or not (news_key and question_key):
+        return False
+    init_ai_news_answers_table()
+    conn = _get_conn()
+    try:
+        cur = conn.execute(
+            "DELETE FROM ai_news_answers WHERE news_key = ? AND question_key = ?",
+            (news_key, question_key),
+        )
+        conn.commit()
+        return cur.rowcount > 0
     finally:
         conn.close()
 
@@ -497,39 +550,53 @@ def record_exists(country: str, date: str, label: str = "") -> bool:
         conn.close()
 
 
-def save_record(country: str, date: str, value: float, unit: str, label: str = "", **extra) -> bool:
+def save_record(country: str, date: str, value: float, unit: str, label: str = "", force: bool = False, **extra) -> bool:
     """
-    Einen Abfrage-Datensatz in SQLite speichern, nur wenn (country, date, label) noch nicht existiert.
+    Einen Abfrage-Datensatz in SQLite speichern.
+    Ohne force: nur wenn (country, date, label) noch nicht existiert.
+    Mit force=True: vorhandenen Eintrag löschen und neu einfügen (für DAX-Nachladen).
 
     :param country: Ländercode (z. B. us, de, at, ch)
     :param date: Stichtag/Periode (z. B. 2026-03-02 oder Januar 2026)
     :param value: Hauptwert (z. B. Saldo in Mrd.)
     :param unit: Einheit (z. B. Mrd. USD, Mrd. EUR)
     :param label: optionale Bezeichnung
+    :param force: wenn True, vorhandenen Eintrag überschreiben (DELETE + INSERT)
     :param extra: weitere Felder werden als JSON in extra gespeichert
-    :return: True wenn gespeichert, False wenn bereits vorhanden (übersprungen)
+    :return: True wenn gespeichert/ersetzt, False wenn bereits vorhanden und nicht force
     """
     init_db()
-    if record_exists(country, date, label):
+    if not force and record_exists(country, date, label):
         return False
     conn = _get_conn()
     try:
         extra_json = json.dumps(extra, ensure_ascii=False) if extra else None
+        country_lower = country.lower()
+        label_val = label or ""
+        if force:
+            conn.execute(
+                """DELETE FROM finance_records WHERE LOWER(country) = ? AND date = ? AND COALESCE(label, '') = ?""",
+                (country_lower, date, label_val),
+            )
         conn.execute(
             """INSERT INTO finance_records (country, date, value, unit, label, fetched_at, extra)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
-                country.lower(),
+                country_lower,
                 date,
                 value,
                 unit,
-                label or "",
+                label_val,
                 datetime.utcnow().isoformat() + "Z",
                 extra_json,
             ),
         )
         conn.commit()
         return True
+    except sqlite3.IntegrityError:
+        if force:
+            raise
+        return False
     finally:
         conn.close()
 

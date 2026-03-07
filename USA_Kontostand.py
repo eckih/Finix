@@ -109,6 +109,132 @@ def _get_fred_observations(series_id: str, api_key: str, limit: int = 100, obser
     except Exception:
         return []
 
+
+# DAX (Deutscher Aktienindex) per yfinance – FRED hat keine täglichen DAX-Kurse
+def _get_dax_from_yfinance(start_date: str = None, after_date: str = None):
+    """
+    Holt tägliche Schlusskurse des DAX (Yahoo-Symbol ^GDAXI) per yfinance.
+    after_date: nur Tage strikt nach diesem Datum (für inkrementellen Abruf).
+    """
+    try:
+        import yfinance as yf
+    except ImportError:
+        log.warning("yfinance nicht installiert – DAX wird nicht geladen (pip install yfinance)")
+        return []
+    start_date = (start_date or "2020-01-01").strip() or "2020-01-01"
+    fetch_start = _day_after(after_date) if after_date else start_date
+    end_date = (datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d")
+    if fetch_start and fetch_start >= end_date:
+        log.info("DAX: after_date bereits aktuell, kein Abruf nötig")
+        return []
+    # Keine eigene Session übergeben – yfinance 1.x erwartet curl_cffi und verwaltet die Session selbst
+    df = None
+    for symbol in ("^GDAXI", "GDAXI"):
+        try:
+            df = yf.download(
+                symbol,
+                start=fetch_start,
+                end=end_date,
+                progress=False,
+                auto_adjust=False,
+                threads=False,
+                timeout=15,
+            )
+            if df is not None and not df.empty:
+                log.info("yfinance DAX: %d Zeilen von %s", len(df), symbol)
+                break
+        except Exception as e:
+            log.warning("yfinance DAX (%s) Abruf fehlgeschlagen: %s", symbol, e)
+            df = None
+    if df is None or df.empty:
+        log.warning("yfinance DAX: Keine Daten (^GDAXI und GDAXI versucht, start=%s end=%s)", fetch_start, end_date)
+        return []
+    # yfinance 1.x: Close-Spalte finden (einfach oder MultiIndex)
+    close_col = None
+    if "Close" in df.columns:
+        close_col = "Close"
+    else:
+        for col in list(df.columns):
+            if col == "Close" or (isinstance(col, tuple) and len(col) and col[0] == "Close"):
+                close_col = col
+                break
+    if close_col is None:
+        close_col = df.columns[3] if len(df.columns) > 3 else df.columns[0]
+    try:
+        col_idx = df.columns.get_loc(close_col)
+        if isinstance(col_idx, (list, tuple)):
+            col_idx = col_idx[0] if col_idx else 0
+        elif hasattr(col_idx, "start") and col_idx.start is not None:
+            col_idx = col_idx.start
+    except Exception:
+        col_idx = 3 if len(df.columns) > 3 else 0
+    # Close als Series (robuster als iat bei MultiIndex)
+    try:
+        close_series = df[close_col] if close_col in df.columns else df.iloc[:, col_idx]
+    except Exception:
+        close_series = df.iloc[:, 3] if len(df.columns) > 3 else df.iloc[:, 0]
+    try:
+        log.info("DAX: columns=%s, len=%d, close_series.dtype=%s, sample=%s",
+                 [str(c)[:20] for c in list(df.columns)], len(df), getattr(close_series, "dtype", ""), str(close_series.iloc[0])[:30])
+    except Exception:
+        pass
+    out = []
+    for i in range(len(df)):
+        try:
+            idx = df.index[i]
+            date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)[:10]
+        except Exception:
+            date_str = str(df.index[i])[:10]
+        if date_str < start_date:
+            continue
+        if after_date and date_str <= after_date:
+            continue
+        try:
+            val = close_series.iloc[i]
+        except Exception:
+            try:
+                val = df.iat[i, col_idx]
+            except Exception:
+                continue
+        if val is None:
+            continue
+        try:
+            if hasattr(val, "item") and not hasattr(val, "iloc"):
+                v = float(val.item())
+            else:
+                v = float(val)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if v != v:  # NaN
+            continue
+        out.append({
+            "country": "markets",
+            "date": date_str,
+            "value": v,
+            "unit": "Index",
+            "label": "DAX",
+        })
+    if not out and len(df) > 0:
+        # Fallback: iterrows, Close = Spalte 3 (OHLC)
+        for idx, row in df.iterrows():
+            try:
+                date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)[:10]
+            except Exception:
+                date_str = str(idx)[:10]
+            if date_str < start_date or (after_date and date_str <= after_date):
+                continue
+            try:
+                cell = row.iloc[3] if len(row) > 3 else row.iloc[0]
+                v = float(cell)
+                if v == v:
+                    out.append({"country": "markets", "date": date_str, "value": v, "unit": "Index", "label": "DAX"})
+            except (TypeError, ValueError, IndexError, AttributeError):
+                pass
+        out.sort(key=lambda x: x["date"])
+    log.info("DAX: %d Einträge für DB vorbereitet (von %s bis %s)", len(out), out[0]["date"] if out else "-", out[-1]["date"] if out else "-")
+    return out
+
+
 # BMF-URL für Kreditbestand (monatlich, XLSX)
 BMF_KREDITBESTAND_XLSX = (
     "https://www.bundesfinanzministerium.de/Datenportal/Daten/offene-daten/"
@@ -310,7 +436,8 @@ def get_us_historical(limit_treasury: int = 100, limit_fred: int = 100, start_da
 
 def get_markets_historical(limit_fred: int = 500, start_date: str = None):
     """
-    Holt historische Kursdaten von FRED: S&P 500, DJIA, NASDAQ, BTC, ETH, LTC.
+    Holt historische Kursdaten: FRED für S&P 500, DJIA, NASDAQ, BTC, ETH, LTC;
+    Alpha Vantage für DAX (Deutscher Aktienindex, FRED hat keine täglichen DAX-Kurse).
     Lädt nur Daten nach dem neuesten in der DB (inkrementell), um Doppel-Downloads zu vermeiden.
     """
     records = []
@@ -346,7 +473,27 @@ def get_markets_historical(limit_fred: int = 500, start_date: str = None):
                 "unit": unit,
                 "label": label,
             })
+    # DAX per yfinance (Deutscher Aktienindex; FRED hat keine täglichen DAX-Daten)
+    after_dax = max_dates_markets.get("DAX")
+    dax_records = _get_dax_from_yfinance(start_date=start_date, after_date=after_dax)
+    records.extend(dax_records)
     return records
+
+
+def get_dax_historical(start_date: str = None):
+    """
+    Holt nur DAX-Kurse (yfinance ^GDAXI) für separaten Abruf per Button.
+    Inkrementell: nur Tage nach dem letzten in der DB.
+    """
+    start_date = (start_date or "2020-01-01").strip() or "2020-01-01"
+    after_date = None
+    try:
+        import persist
+        max_dates = persist.get_max_dates_by_country("markets")
+        after_date = max_dates.get("DAX")
+    except Exception:
+        pass
+    return _get_dax_from_yfinance(start_date=start_date, after_date=after_date)
 
 
 def get_de_account_balance():

@@ -122,6 +122,8 @@ export default function App() {
   const [adminSaving, setAdminSaving] = useState(false)
   const [adminPageSize, setAdminPageSize] = useState(50)
   const [adminOffset, setAdminOffset] = useState(0)
+  const [adminSortBy, setAdminSortBy] = useState('')
+  const [adminSortOrder, setAdminSortOrder] = useState('asc')
   const [aiPresetQuestions, setAiPresetQuestions] = useState([])
   const [aiQuestionsConfig, setAiQuestionsConfig] = useState([])
   const [aiQuestionsConfigLoading, setAiQuestionsConfigLoading] = useState(false)
@@ -214,12 +216,13 @@ export default function App() {
   useEffect(() => {
     if (newsAiOpenIndex == null || !Array.isArray(newsFeed) || !newsFeed[newsAiOpenIndex]) return
     const item = newsFeed[newsAiOpenIndex]
-    const params = new URLSearchParams({ url: item.url || '', time_published: item.time_published || '', title: item.title || '' })
+    const lang = (i18n.language || 'de').startsWith('en') ? 'en' : 'de'
+    const params = new URLSearchParams({ url: item.url || '', time_published: item.time_published || '', title: item.title || '', lang })
     fetch(`${API}/ai-answers-cache?${params}`)
       .then((r) => r.json())
       .then((data) => setAiCacheStatusByIndex((prev) => ({ ...prev, [newsAiOpenIndex]: data.questions || [] })))
       .catch(() => {})
-  }, [newsAiOpenIndex, newsFeed])
+  }, [newsAiOpenIndex, newsFeed, i18n.language])
 
   const loadAdminTables = useCallback(async () => {
     try {
@@ -234,17 +237,21 @@ export default function App() {
     }
   }, [])
 
-  const loadAdminTable = useCallback(async (offset = null, limit = null) => {
+  const loadAdminTable = useCallback(async (offset = null, limit = null, sortBy = null, sortOrder = null) => {
     if (!adminSelectedTable) {
       setAdminData({ columns: [], rows: [], total: 0 })
       return
     }
     const off = offset ?? adminOffset
     const lim = limit ?? adminPageSize
+    const by = sortBy ?? adminSortBy
+    const order = sortOrder ?? adminSortOrder
     setAdminLoading(true)
     setAdminError(null)
     try {
-      const res = await fetch(`${API}/admin/table/${encodeURIComponent(adminSelectedTable)}?limit=${lim}&offset=${off}`)
+      let url = `${API}/admin/table/${encodeURIComponent(adminSelectedTable)}?limit=${lim}&offset=${off}`
+      if (by) url += `&sort_by=${encodeURIComponent(by)}&sort_order=${encodeURIComponent(order)}`
+      const res = await fetch(url)
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.detail || data.error || res.statusText)
       setAdminData({ columns: data.columns || [], rows: data.rows || [], total: data.total ?? 0 })
@@ -254,7 +261,7 @@ export default function App() {
     } finally {
       setAdminLoading(false)
     }
-  }, [adminSelectedTable, adminOffset, adminPageSize])
+  }, [adminSelectedTable, adminOffset, adminPageSize, adminSortBy, adminSortOrder])
 
   useEffect(() => {
     if (view === 'admin') loadAdminTables()
@@ -262,7 +269,24 @@ export default function App() {
 
   useEffect(() => {
     if (view === 'admin' && adminSelectedTable) loadAdminTable(adminOffset, adminPageSize)
-  }, [view, adminSelectedTable, adminOffset, adminPageSize, loadAdminTable])
+  }, [view, adminSelectedTable, adminOffset, adminPageSize, adminSortBy, adminSortOrder, loadAdminTable])
+
+  useEffect(() => {
+    if (adminSelectedTable) {
+      setAdminSortBy('')
+      setAdminSortOrder('asc')
+    }
+  }, [adminSelectedTable])
+
+  const adminToggleSort = useCallback((col) => {
+    if (adminSortBy === col) {
+      setAdminSortOrder((o) => (o === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setAdminSortBy(col)
+      setAdminSortOrder('asc')
+    }
+    setAdminOffset(0)
+  }, [adminSortBy])
 
   const adminGoToPage = useCallback((newOffset) => {
     setAdminOffset((prev) => Math.max(0, newOffset))
@@ -365,8 +389,10 @@ export default function App() {
     setNewsAiLoadingIndex(index)
     if (!forceRefresh) setNewsAiResponseByIndex((prev) => ({ ...prev, [index]: null }))
     try {
-      const body = { question: (question || '').trim(), title: title || '', summary: summary || '', url: url || '', time_published: timePublished || '', force_refresh: !!forceRefresh }
-      if (newsAiSelectedModel) body.model = newsAiSelectedModel
+      const effectiveModel = newsAiSelectedModel || (newsAiModels.length ? newsAiModels[0]?.id : '')
+      const lang = (i18n.language || 'de').startsWith('en') ? 'en' : 'de'
+      const body = { question: (question || '').trim(), title: title || '', summary: summary || '', url: url || '', time_published: timePublished || '', force_refresh: !!forceRefresh, lang }
+      if (effectiveModel) body.model = effectiveModel
       const res = await fetch(`${API}/ai/ask`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -393,10 +419,32 @@ export default function App() {
     } finally {
       setNewsAiLoadingIndex(null)
     }
-  }, [newsAiSelectedModel])
+  }, [newsAiSelectedModel, newsAiModels, i18n.language])
+
+  const deleteAiCache = useCallback(async (index, question, url, timePublished, title) => {
+    const q = (question || '').trim()
+    if (!q) return
+    const params = new URLSearchParams({ url: url || '', time_published: timePublished || '', title: title || '', question: q })
+    try {
+      const res = await fetch(`${API}/ai-answers-cache?${params}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) return
+      setAiCacheStatusByIndex((prev) => {
+        const list = (prev[index] || []).filter((c) => (c.question_text || '').trim() !== q)
+        return { ...prev, [index]: list }
+      })
+      setNewsAiResponseByIndex((prev) => {
+        const cur = prev[index]
+        if (cur && (cur.question || '').trim() === q) return { ...prev, [index]: null }
+        return prev
+      })
+    } catch (_) {}
+  }, [])
+
   const [marketsHistory, setMarketsHistory] = useState([])
   const [kurseLoading, setKurseLoading] = useState(false)
   const [kurseFetchingHistory, setKurseFetchingHistory] = useState(false)
+  const [fetchingDax, setFetchingDax] = useState(false)
   const locale = i18n.language && i18n.language.startsWith('en') ? 'en-US' : 'de-DE'
   const formatDate = (dateStr, loc = locale) => {
     if (!dateStr || typeof dateStr !== 'string') return dateStr ?? '–'
@@ -458,7 +506,7 @@ export default function App() {
     setKurseLoading(true)
     setError(null)
     try {
-      const res = await fetch(`${API}/history?country=markets&limit=3000&min_date=2020-01-01`)
+      const res = await fetch(`${API}/history?country=markets&limit=5000&min_date=2020-01-01`)
       if (!res.ok) throw new Error(t('messages.errorHistory'))
       const data = await res.json()
       setMarketsHistory(data.data || [])
@@ -695,6 +743,28 @@ export default function App() {
     }
   }
 
+  const handleFetchDax = async () => {
+    setFetchingDax(true)
+    setError(null)
+    try {
+      const res = await fetch(`${API}/fetch/dax/stream?start_date=2020-01-01`, { method: 'POST' })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.detail || res.statusText)
+      }
+      await readHistoryStream(res, (obj) => {
+        setHistoryProgressLog((prev) => [...prev, obj])
+        if (obj.type === 'error') setError(obj.message)
+        if (obj.type === 'done') setError(null)
+      })
+      await loadMarketsHistory()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setFetchingDax(false)
+    }
+  }
+
   const isUS = selectedCountry === 'us'
   const labelTGA = t('labels.tga')
   const labelWDTGAL = t('labels.wdtgal')
@@ -705,6 +775,7 @@ export default function App() {
   const labelSP500 = t('labels.sp500')
   const labelDJIA = t('labels.djia')
   const labelNASDAQ = t('labels.nasdaq')
+  const labelDAX = t('labels.dax')
   const labelBTC = t('labels.btc')
   const labelETH = t('labels.eth')
   const labelLTC = t('labels.ltc')
@@ -756,7 +827,7 @@ export default function App() {
   const yAxisUnit = isUS ? formatUnit('Mrd. USD') : formatUnit(history[0]?.unit) || history[0]?.unit || ''
 
   const [visibleSeries, setVisibleSeries] = useState({ tga: true, wdtgal: true, rrp: true, wresbal: true, sofr: true, effr: true })
-  const [visibleKurseSeries, setVisibleKurseSeries] = useState({ sp500: true, djia: true, nasdaq: true, btc: true, eth: true, ltc: true })
+  const [visibleKurseSeries, setVisibleKurseSeries] = useState({ sp500: true, djia: true, nasdaq: true, dax: true, btc: true, eth: true, ltc: true })
   const toggleSeries = (key) => setVisibleSeries((s) => ({ ...s, [key]: !s[key] }))
   const toggleKurseSeries = (key) => setVisibleKurseSeries((s) => ({ ...s, [key]: !s[key] }))
 
@@ -765,17 +836,19 @@ export default function App() {
     const sp500 = byLabel(labelSP500)
     const djia = byLabel(labelDJIA)
     const nasdaq = byLabel(labelNASDAQ)
+    const dax = byLabel(labelDAX)
     const btc = byLabel(labelBTC)
     const eth = byLabel(labelETH)
     const ltc = byLabel(labelLTC)
     const allDates = [...new Set([
-      ...sp500.map((x) => x.date), ...djia.map((x) => x.date), ...nasdaq.map((x) => x.date),
+      ...sp500.map((x) => x.date), ...djia.map((x) => x.date), ...nasdaq.map((x) => x.date), ...dax.map((x) => x.date),
       ...btc.map((x) => x.date), ...eth.map((x) => x.date), ...ltc.map((x) => x.date),
     ])].filter((d) => d >= '2020-01-01').sort()
     return allDates.map((date) => {
       const s = sp500.find((x) => x.date === date)
       const d = djia.find((x) => x.date === date)
       const n = nasdaq.find((x) => x.date === date)
+      const dx = dax.find((x) => x.date === date)
       const b = btc.find((x) => x.date === date)
       const e = eth.find((x) => x.date === date)
       const l = ltc.find((x) => x.date === date)
@@ -784,13 +857,14 @@ export default function App() {
         sp500: s != null ? s.value : null,
         djia: d != null ? d.value : null,
         nasdaq: n != null ? n.value : null,
+        dax: dx != null ? dx.value : null,
         btc: b != null ? b.value : null,
         eth: e != null ? e.value : null,
         ltc: l != null ? l.value : null,
       }
     })
   })()
-  const hasKurseData = kurseChartData.length > 0 && kurseChartData.some((d) => d.sp500 != null || d.djia != null || d.nasdaq != null || d.btc != null || d.eth != null || d.ltc != null)
+  const hasKurseData = kurseChartData.length > 0 && kurseChartData.some((d) => d.sp500 != null || d.djia != null || d.nasdaq != null || d.dax != null || d.btc != null || d.eth != null || d.ltc != null)
 
   const nKurse = kurseChartData.length
   const [kurseRangeStart, setKurseRangeStart] = useState(0)
@@ -956,25 +1030,41 @@ export default function App() {
           <section className="controls" style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
             <button
               onClick={handleKurseLoadHistory}
-              disabled={kurseFetchingHistory}
+              disabled={kurseFetchingHistory || fetchingDax}
               style={{
                 padding: '0.5rem 1rem',
                 fontSize: '1rem',
-                background: kurseFetchingHistory ? '#aaa' : '#059669',
+                background: kurseFetchingHistory || fetchingDax ? '#aaa' : '#059669',
                 color: '#fff',
                 border: 'none',
                 borderRadius: '6px',
-                cursor: kurseFetchingHistory ? 'not-allowed' : 'pointer',
+                cursor: kurseFetchingHistory || fetchingDax ? 'not-allowed' : 'pointer',
               }}
             >
               {kurseFetchingHistory ? t('kurse.loadHistoryBusy') : t('kurse.loadHistory')}
             </button>
+            <button
+              onClick={handleFetchDax}
+              disabled={kurseFetchingHistory || fetchingDax}
+              style={{
+                padding: '0.5rem 1rem',
+                fontSize: '1rem',
+                background: kurseFetchingHistory || fetchingDax ? '#aaa' : '#7c3aed',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: kurseFetchingHistory || fetchingDax ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {fetchingDax ? t('kurse.loadDaxBusy') : t('kurse.loadDax')}
+            </button>
+            <span style={{ fontSize: '0.85rem', color: '#64748b' }}>{t('kurse.loadHint')}</span>
           </section>
-          {(historyProgressLog.length > 0 || kurseFetchingHistory) && (
+          {(historyProgressLog.length > 0 || kurseFetchingHistory || fetchingDax) && (
             <section aria-live="polite" style={{ marginBottom: '1.5rem', padding: '0.75rem 1rem', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
               <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', color: '#334155' }}>{t('historyProgress.title')}</h3>
               <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.9rem', color: '#475569', maxHeight: 160, overflowY: 'auto' }}>
-                {kurseFetchingHistory && historyProgressLog.length === 0 && <li key="wait">{t('historyProgress.waiting')}</li>}
+                {(kurseFetchingHistory || fetchingDax) && historyProgressLog.length === 0 && <li key="wait">{t('historyProgress.waiting')}</li>}
                 {historyProgressLog.map((entry, i) => (
                   <li key={i} style={{ color: entry.type === 'error' ? '#b91c1c' : entry.type === 'done' ? '#15803d' : undefined, marginBottom: '0.25rem' }}>
                     {entry.ts && <span style={{ fontVariantNumeric: 'tabular-nums', marginRight: '0.5rem', color: '#64748b' }}>[{entry.ts}]</span>}
@@ -990,41 +1080,44 @@ export default function App() {
           ) : (
             <section className="chart" style={{ background: '#fff', padding: '1rem', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', marginBottom: '1.5rem' }}>
               <h2 style={{ margin: '0 0 1rem', fontSize: '1.1rem' }}>{t('kurse.title')}</h2>
-              {hasKurseData && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center', marginBottom: '0.75rem', fontSize: '0.9rem' }}>
-                  <span style={{ color: '#555', marginRight: '0.25rem' }}>{t('chart.show')}:</span>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                    <input type="checkbox" checked={visibleKurseSeries.sp500} onChange={() => toggleKurseSeries('sp500')} />
-                    <span style={{ width: 10, height: 10, backgroundColor: '#2563eb' }} />
-                    <span>{labelSP500}</span>
-                  </label>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                    <input type="checkbox" checked={visibleKurseSeries.djia} onChange={() => toggleKurseSeries('djia')} />
-                    <span style={{ width: 10, height: 10, backgroundColor: '#059669' }} />
-                    <span>{labelDJIA}</span>
-                  </label>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                    <input type="checkbox" checked={visibleKurseSeries.nasdaq} onChange={() => toggleKurseSeries('nasdaq')} />
-                    <span style={{ width: 10, height: 10, backgroundColor: '#dc2626' }} />
-                    <span>{labelNASDAQ}</span>
-                  </label>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                    <input type="checkbox" checked={visibleKurseSeries.btc} onChange={() => toggleKurseSeries('btc')} />
-                    <span style={{ width: 10, height: 10, backgroundColor: '#f59e0b' }} />
-                    <span>{labelBTC}</span>
-                  </label>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                    <input type="checkbox" checked={visibleKurseSeries.eth} onChange={() => toggleKurseSeries('eth')} />
-                    <span style={{ width: 10, height: 10, backgroundColor: '#6366f1' }} />
-                    <span>{labelETH}</span>
-                  </label>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                    <input type="checkbox" checked={visibleKurseSeries.ltc} onChange={() => toggleKurseSeries('ltc')} />
-                    <span style={{ width: 10, height: 10, backgroundColor: '#14b8a6' }} />
-                    <span>{labelLTC}</span>
-                  </label>
-                </div>
-              )}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center', marginBottom: '0.75rem', fontSize: '0.9rem' }}>
+                <span style={{ color: '#555', marginRight: '0.25rem' }}>{t('chart.show')}:</span>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={visibleKurseSeries.sp500} onChange={() => toggleKurseSeries('sp500')} />
+                  <span style={{ width: 10, height: 10, backgroundColor: '#2563eb' }} />
+                  <span>{labelSP500}</span>
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={visibleKurseSeries.djia} onChange={() => toggleKurseSeries('djia')} />
+                  <span style={{ width: 10, height: 10, backgroundColor: '#059669' }} />
+                  <span>{labelDJIA}</span>
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={visibleKurseSeries.nasdaq} onChange={() => toggleKurseSeries('nasdaq')} />
+                  <span style={{ width: 10, height: 10, backgroundColor: '#dc2626' }} />
+                  <span>{labelNASDAQ}</span>
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} title={t('kurse.loadDax')}>
+                  <input type="checkbox" checked={visibleKurseSeries.dax} onChange={() => toggleKurseSeries('dax')} />
+                  <span style={{ width: 10, height: 10, backgroundColor: '#7c3aed' }} />
+                  <span>{labelDAX}</span>
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={visibleKurseSeries.btc} onChange={() => toggleKurseSeries('btc')} />
+                  <span style={{ width: 10, height: 10, backgroundColor: '#f59e0b' }} />
+                  <span>{labelBTC}</span>
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={visibleKurseSeries.eth} onChange={() => toggleKurseSeries('eth')} />
+                  <span style={{ width: 10, height: 10, backgroundColor: '#6366f1' }} />
+                  <span>{labelETH}</span>
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={visibleKurseSeries.ltc} onChange={() => toggleKurseSeries('ltc')} />
+                  <span style={{ width: 10, height: 10, backgroundColor: '#14b8a6' }} />
+                  <span>{labelLTC}</span>
+                </label>
+              </div>
               {kurseChartData.length > 0 && hasKurseData ? (
                 <>
                   <ResponsiveContainer width="100%" height={360}>
@@ -1051,6 +1144,7 @@ export default function App() {
                       {visibleKurseSeries.sp500 && <Line type="monotone" dataKey="sp500" name={labelSP500} stroke="#2563eb" strokeWidth={2} dot={false} connectNulls yAxisId="left" />}
                       {visibleKurseSeries.djia && <Line type="monotone" dataKey="djia" name={labelDJIA} stroke="#059669" strokeWidth={2} dot={false} connectNulls yAxisId="left" />}
                       {visibleKurseSeries.nasdaq && <Line type="monotone" dataKey="nasdaq" name={labelNASDAQ} stroke="#dc2626" strokeWidth={2} dot={false} connectNulls yAxisId="left" />}
+                      {visibleKurseSeries.dax && <Line type="monotone" dataKey="dax" name={labelDAX} stroke="#7c3aed" strokeWidth={2} dot={false} connectNulls yAxisId="left" />}
                       {visibleKurseSeries.btc && <Line type="monotone" dataKey="btc" name={labelBTC} stroke="#f59e0b" strokeWidth={2} dot={false} connectNulls yAxisId="right" />}
                       {visibleKurseSeries.eth && <Line type="monotone" dataKey="eth" name={labelETH} stroke="#6366f1" strokeWidth={2} dot={false} connectNulls yAxisId="right" />}
                       {visibleKurseSeries.ltc && <Line type="monotone" dataKey="ltc" name={labelLTC} stroke="#14b8a6" strokeWidth={2} dot={false} connectNulls yAxisId="right" />}
@@ -1514,7 +1608,18 @@ export default function App() {
               <thead style={{ position: 'sticky', top: 0, background: '#0f172a', color: '#fff', zIndex: 1 }}>
                 <tr>
                   {adminData.columns.map((col) => (
-                    <th key={col} style={{ padding: '0.5rem 0.6rem', textAlign: 'left', borderBottom: '1px solid #334155', whiteSpace: 'nowrap' }}>{col}</th>
+                    <th
+                      key={col}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => adminToggleSort(col)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); adminToggleSort(col) } }}
+                      title={t('config.adminSortHint')}
+                      style={{ padding: '0.5rem 0.6rem', textAlign: 'left', borderBottom: '1px solid #334155', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      {col}
+                      {adminSortBy === col && <span style={{ marginLeft: 4, opacity: 0.9 }}>{adminSortOrder === 'asc' ? ' ↑' : ' ↓'}</span>}
+                    </th>
                   ))}
                   <th style={{ padding: '0.5rem 0.6rem', borderBottom: '1px solid #334155', width: 140, textAlign: 'right' }}>{t('config.adminActions')}</th>
                 </tr>
@@ -1721,21 +1826,32 @@ export default function App() {
                           const modelNames = { 'gemini-2.5-flash': t('config.gemini25Flash'), 'gemini-2.5-pro': t('config.gemini25Pro'), 'claude-sonnet-4-6': t('config.sonnet46') }
                           const modelLabel = cacheEntry?.model ? (modelNames[cacheEntry.model] || cacheEntry.model) : ''
                           return (
-                            <button
-                              key={q.key}
-                              type="button"
-                              role="menuitem"
-                              onClick={() => askAi(i, q.text, item.title, item.summary, item.url, item.time_published)}
-                              disabled={newsAiLoadingIndex === i}
-                              style={{ display: 'block', width: '100%', padding: '0.5rem 0.75rem', textAlign: 'left', border: 'none', background: 'none', cursor: newsAiLoadingIndex === i ? 'wait' : 'pointer', fontSize: '0.9rem' }}
-                            >
-                              <span style={{ display: 'block' }}>{q.text}</span>
+                            <div key={q.key} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.35rem', padding: '0.5rem 0.75rem', borderBottom: '1px solid #f1f5f9' }}>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => askAi(i, q.text, item.title, item.summary, item.url, item.time_published)}
+                                disabled={newsAiLoadingIndex === i}
+                                style={{ flex: 1, padding: 0, textAlign: 'left', border: 'none', background: 'none', cursor: newsAiLoadingIndex === i ? 'wait' : 'pointer', fontSize: '0.9rem' }}
+                              >
+                                <span style={{ display: 'block' }}>{q.text}</span>
+                                {cacheEntry && (
+                                  <span style={{ display: 'block', fontSize: '0.75rem', color: '#0ea5e9', marginTop: '0.2rem' }} title={t('news.aiModel') + ': ' + modelLabel}>
+                                    {t('news.aiFromCache')}{modelLabel ? ` · ${modelLabel}` : ''}
+                                  </span>
+                                )}
+                              </button>
                               {cacheEntry && (
-                                <span style={{ display: 'block', fontSize: '0.75rem', color: '#0ea5e9', marginTop: '0.2rem' }} title={t('news.aiModel') + ': ' + modelLabel}>
-                                  {t('news.aiFromCache')}{modelLabel ? ` · ${modelLabel}` : ''}
-                                </span>
+                                <button
+                                  type="button"
+                                  title={t('news.aiDeleteCache')}
+                                  onClick={(e) => { e.stopPropagation(); deleteAiCache(i, q.text, item.url, item.time_published, item.title) }}
+                                  style={{ flexShrink: 0, padding: '0.2rem 0.4rem', fontSize: '0.75rem', color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 4, cursor: 'pointer' }}
+                                >
+                                  {t('config.adminDelete')}
+                                </button>
                               )}
-                            </button>
+                            </div>
                           )
                         })}
                         <div style={{ padding: '0.5rem 0.75rem', borderTop: '1px solid #e2e8f0', display: 'flex', gap: 4 }}>

@@ -79,6 +79,26 @@ Ohne Keys laufen Teile der App eingeschränkt (z. B. keine FRED-Daten, keine N
 - `libretranslate/lt-local/` – eigenes Docker-Compose für LibreTranslate
 - `up.ps1` / `up.sh` – Start mit optionalem LibreTranslate
 
+### Backend ohne Docker starten
+
+Nützlich z. B. zum ersten Abruf von DAX-Daten (yfinance funktioniert lokal oft zuverlässiger als im Container):
+
+1. **Projektroot** als Arbeitsverzeichnis: `cd Pfad/zum/Finix`
+2. **Virtuelle Umgebung** (empfohlen):  
+   `python -m venv .venv`  
+   Dann aktivieren: **Windows** `.venv\Scripts\activate` · **Linux/macOS** `source .venv/bin/activate`
+3. **Abhängigkeiten:**  
+   `pip install -r requirements.txt`  
+   `pip install -r backend/requirements.txt`
+4. **Umgebung:** `.env` im Projektroot (wie bei Docker)
+5. **Backend starten:**  
+   `python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000`  
+   Optional mit Reload: `python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload`
+6. **Frontend** weiterhin per Docker oder lokal: `cd frontend && npm install && npm run dev`  
+   API-Ziel: Backend unter **http://localhost:8000** (im Frontend ggf. Proxy oder `VITE_PROXY_TARGET` anpassen).
+
+Die Datenbank liegt unter `data/finance.db` – nach dem DAX-Abruf lokal kannst du dieselbe DB wieder mit Docker nutzen.
+
 ---
 
 ## English
@@ -154,6 +174,26 @@ Without keys, some parts of the app are limited (e.g. no FRED data, no news, no 
 - `data/` – SQLite database, logs (after first run)
 - `libretranslate/lt-local/` – separate Docker Compose for LibreTranslate
 - `up.ps1` / `up.sh` – Run with optional LibreTranslate
+
+### Run backend without Docker
+
+Useful e.g. for an initial DAX fetch (yfinance often works more reliably locally than in a container):
+
+1. **Project root** as working directory: `cd path/to/Finix`
+2. **Virtual environment** (recommended):  
+   `python -m venv .venv`  
+   Then activate: **Windows** `.venv\Scripts\activate` · **Linux/macOS** `source .venv/bin/activate`
+3. **Dependencies:**  
+   `pip install -r requirements.txt`  
+   `pip install -r backend/requirements.txt`
+4. **Environment:** `.env` in project root (same as for Docker)
+5. **Start backend:**  
+   `python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000`  
+   With reload: `python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload`
+6. **Frontend** via Docker or locally: `cd frontend && npm install && npm run dev`  
+   API target: backend at **http://localhost:8000** (adjust proxy or `VITE_PROXY_TARGET` in frontend if needed).
+
+The database is at `data/finance.db`; after fetching DAX locally you can keep using the same DB with Docker.
 
 ---
 

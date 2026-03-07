@@ -36,6 +36,7 @@
     "adminClearTable": "Clear table",
     "adminClearTableConfirm": "Really clear table \"{{table}}\"? All rows will be deleted.",
     "adminClearTableHint": "Delete all rows in this table",
+    "adminSortHint": "Click to sort by this column",
     "adminActions": "Actions",
     "adminDescription": "View SQLite tables, edit and delete rows.",
     "gemini25Flash": "Gemini 2.5 Flash",
@@ -77,6 +78,7 @@
     "aiLoading": "Loading…",
     "aiFromCache": "From cache.",
     "aiRefresh": "Refresh",
+    "aiDeleteCache": "Delete answer from cache",
     "noNewsForSymbol": "No news for \"{{symbol}}\". Try another symbol (e.g. AAPL, TSLA).",
     "noNewsDefault": "API returned no entries. Enter a symbol (e.g. TSLA, AAPL) and refresh.",
     "aiModel": "Model",
@@ -108,7 +110,10 @@
     "axisIndices": "Indices",
     "noData": "No price data yet. Click \"Load history (USA)\" on Public finances or \"Load history\" below.",
     "loadHistory": "Load history",
-    "loadHistoryBusy": "Loading…"
+    "loadHistoryBusy": "Loading…",
+    "loadDax": "Load DAX",
+    "loadDaxBusy": "Loading DAX…",
+    "loadHint": "„Load history“ fetches S&P 500, DJIA, NASDAQ, BTC, ETH, LTC (FRED). DAX separately via „Load DAX“."
   },
   "controls": {
     "country": "Country",
@@ -161,6 +166,7 @@
     "sp500": "S&P 500",
     "djia": "DJIA",
     "nasdaq": "NASDAQ",
+    "dax": "DAX",
     "btc": "BTC",
     "eth": "ETH",
     "ltc": "LTC"

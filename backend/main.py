@@ -135,7 +135,7 @@ def get_history(
     is_markets = country and country.lower() == "markets"
     if is_us and min_date is None:
         min_date = "2020-01-01"
-    fetch_limit = min(limit * 100, 15000) if is_us else limit
+    fetch_limit = min(limit * 100, 15000) if is_us else (min(limit * 10, 50000) if is_markets else limit)
     records = persist.load_history(
         country=country,
         limit=fetch_limit,
@@ -231,8 +231,8 @@ def fetch_country(country: str):
     return {"ok": True, "record": result}
 
 
-def _save_records(records):
-    """Hilfsfunktion: Liste von Records in DB speichern (nur neue; für Executor). Gibt Anzahl neu gespeicherter zurück."""
+def _save_records(records, force=False):
+    """Hilfsfunktion: Liste von Records in DB speichern. force=True: INSERT OR REPLACE (z. B. für DAX). Gibt Anzahl gespeicherter zurück."""
     import persist
     n = 0
     for r in records:
@@ -242,6 +242,7 @@ def _save_records(records):
             value=r["value"],
             unit=r["unit"],
             label=r["label"],
+            force=force,
         ):
             n += 1
     return n
@@ -288,7 +289,7 @@ async def _stream_us_history_events(limit: int, start_date: str):
         })
     yield _line({"type": "progress", "message": f"US-Daten fertig: {total_saved_us} neue, {len(records) - total_saved_us} bereits in DB."})
 
-    yield _line({"type": "progress", "message": "Kurse (S&P 500, DJIA, NASDAQ, BTC, ETH, LTC) werden geladen."})
+    yield _line({"type": "progress", "message": "Kurse (S&P 500, DJIA, NASDAQ, DAX, BTC, ETH, LTC) werden geladen."})
     try:
         markets_records = await loop.run_in_executor(
             None,
@@ -334,6 +335,74 @@ async def fetch_us_history_stream(
     log.info("App: Historie laden (Stream) gestartet limit=%s start_date=%s", limit, start_date)
     return StreamingResponse(
         _stream_us_history_events(limit, start_date),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+async def _stream_dax_events(start_date: str):
+    """Async-Generator: nur DAX (yfinance) laden, NDJSON mit progress/done."""
+    from datetime import datetime
+    import persist
+    import USA_Kontostand as api
+    loop = asyncio.get_event_loop()
+
+    def _line(obj):
+        obj = {**obj, "ts": datetime.now().strftime("%H:%M:%S")}
+        return json.dumps(obj, ensure_ascii=False) + "\n"
+
+    yield _line({"type": "progress", "message": "DAX wird geladen (yfinance)."})
+    try:
+        records = await loop.run_in_executor(
+            None,
+            lambda: api.get_dax_historical(start_date=start_date),
+        )
+    except Exception as e:
+        log.exception("get_dax_historical failed")
+        yield _line({"type": "error", "message": str(e)})
+        return
+    log.info("DAX Abruf: get_dax_historical lieferte %d Einträge", len(records))
+    if not records:
+        max_dates = persist.get_max_dates_by_country("markets") or {}
+        last_dax = max_dates.get("DAX")
+        if last_dax:
+            yield _line({"type": "done", "ok": True, "saved": 0, "message": f"DAX bereits aktuell (letzter Stand: {last_dax}). Keine neuen Tage."})
+        else:
+            yield _line({"type": "done", "ok": False, "saved": 0, "message": "yfinance lieferte keine DAX-Daten (Yahoo-Anfrage aus Container oft blockiert). Bitte später erneut versuchen oder lokal testen."})
+        return
+    CHUNK_SIZE = 500
+    total_saved = 0
+    for i in range(0, len(records), CHUNK_SIZE):
+        chunk = records[i : i + CHUNK_SIZE]
+        saved = await loop.run_in_executor(None, lambda c=chunk: _save_records(c, force=True))
+        total_saved += saved
+        done = min(i + CHUNK_SIZE, len(records))
+        yield _line({
+            "type": "progress",
+            "message": f"DAX: {done}/{len(records)} verarbeitet, {total_saved} gespeichert.",
+        })
+    if total_saved == 0 and records:
+        log.warning("DAX: 0 von %d gespeichert. DB_PATH=%s Erster Schlüssel: country=%s date=%s label=%s",
+                    len(records), getattr(persist, "DB_PATH", "?"), records[0].get("country"), records[0].get("date"), records[0].get("label"))
+    else:
+        log.info("DAX: %d Einträge gespeichert", total_saved)
+    yield _line({
+        "type": "done",
+        "ok": True,
+        "saved": total_saved,
+        "by_label": {"DAX": len(records)},
+        "message": f"DAX fertig: {total_saved} neue, {len(records) - total_saved} bereits in DB.",
+    })
+
+
+@app.post("/api/fetch/dax/stream")
+async def fetch_dax_stream(
+    start_date: str = Query("2020-01-01", description="Ab diesem Datum (YYYY-MM-DD)"),
+):
+    """Nur DAX-Kurse (yfinance) laden; Antwort ist NDJSON-Stream mit type=progress|done|error."""
+    log.info("App: DAX laden (Stream) gestartet start_date=%s", start_date)
+    return StreamingResponse(
+        _stream_dax_events(start_date),
         media_type="application/x-ndjson",
         headers={"Cache-Control": "no-store"},
     )
@@ -654,6 +723,7 @@ class AIAskBody(BaseModel):
     summary: str = ""
     url: str = ""
     time_published: str = ""
+    lang: str = "de"
     model: str | None = None
     stream: bool = False
     force_refresh: bool = False
@@ -758,14 +828,19 @@ async def post_ai_ask(body: AIAskBody):
     news_key = persist._ai_news_key(url, time_published, title) if use_cache else ""
     question_key = persist._ai_question_key(question) if question else ""
 
+    lang = (body.lang or "de").strip().lower()[:2]
+    if lang not in ("de", "en"):
+        lang = "de"
+
     if use_cache and news_key and question_key and not body.force_refresh:
-        cached = persist.get_ai_news_answer(news_key, question_key)
+        cached = persist.get_ai_news_answer(news_key, question_key, lang)
         if cached is not None:
             answer_cached, model_cached = cached
-            log.info("App: AI-Antwort aus Cache (news_key=%s)", news_key[:8])
+            log.info("App: AI-Antwort aus Cache (news_key=%s lang=%s)", news_key[:8], lang)
             return {"answer": answer_cached, "from_cache": True, "model": model_cached or ""}
 
-    log.info("App: AI-Anfrage question=%s model=%s stream=%s", question[:80], body.model or "(default)", body.stream)
+    model_used = (body.model or "").strip()
+    log.info("App: AI-Anfrage question=%s model=%s stream=%s", question[:80], model_used or "(default)", body.stream)
     if _is_gemini_model(body.model):
         answer, err = await asyncio.to_thread(
             _ask_gemini, body.question, body.title or "", body.summary or "", body.model
@@ -773,6 +848,8 @@ async def post_ai_ask(body: AIAskBody):
         if err:
             raise HTTPException(status_code=502, detail=err)
         answer = answer or ""
+        if not model_used:
+            model_used = body.model or "gemini"
     elif _is_sonnet_model(body.model):
         answer, err = await asyncio.to_thread(
             _ask_anthropic, body.question, body.title or "", body.summary or "", body.model
@@ -780,6 +857,8 @@ async def post_ai_ask(body: AIAskBody):
         if err:
             raise HTTPException(status_code=502, detail=err)
         answer = answer or ""
+        if not model_used:
+            model_used = body.model or "claude-sonnet"
     elif body.stream:
         def gen():
             for line in _stream_lm_studio_ask(
@@ -801,10 +880,25 @@ async def post_ai_ask(body: AIAskBody):
         if err:
             raise HTTPException(status_code=502, detail=err)
         answer = answer or ""
+        if not model_used:
+            model_used = LM_STUDIO_MODEL or "lm-studio"
 
     if use_cache and news_key and question_key and answer:
-        persist.save_ai_news_answer(news_key, question_key, question, answer, body.model or "")
-    return {"answer": answer, "from_cache": False, "model": body.model or ""}
+        persist.save_ai_news_answer(news_key, question_key, question, answer, model_used or "", lang)
+        # Andere Sprache sofort übersetzen und cachen, damit bei Sprachwechsel sofort angezeigt wird
+        other_lang = "en" if lang == "de" else "de"
+        try:
+            translated = _translate_text(answer, other_lang)
+            to_save = (translated or "").strip() if (translated and (translated.strip() != answer.strip())) else answer
+            persist.save_ai_news_answer(news_key, question_key, question, to_save, model_used or "", other_lang)
+            log.info("AI-Cache für %s gespeichert (übersetzt=%s)", other_lang, bool(translated and translated.strip() != answer.strip()))
+        except Exception as e:
+            log.warning("AI-Cache andere Sprache: %s, speichere Original", e)
+            try:
+                persist.save_ai_news_answer(news_key, question_key, question, answer, model_used or "", other_lang)
+            except Exception as e2:
+                log.warning("AI-Cache Fallback speichern: %s", e2)
+    return {"answer": answer, "from_cache": False, "model": model_used or ""}
 
 
 NEWS_CACHE_SEC = 300  # 5 Min. – API nur alle 5 Min. pro Symbol aufrufen
@@ -1383,14 +1477,39 @@ def get_ai_answers_cache(
     url: str = Query("", description="URL der News"),
     time_published: str = Query("", description="time_published der News"),
     title: str = Query("", description="Titel der News (Fallback für news_key)"),
+    lang: str = Query("de", description="Anzeigesprache (de/en) für Cache-Liste"),
 ):
-    """Gecachte AI-Antworten zu einer News abrufen (für Anzeige im Dropdown: welche Fragen sind im Cache, welches Modell)."""
+    """Gecachte AI-Antworten zu einer News für die angegebene Sprache (für Dropdown: welche Fragen im Cache)."""
     import persist
     news_key = persist._ai_news_key((url or "").strip(), (time_published or "").strip(), (title or "").strip())
     if not news_key:
         return {"questions": []}
-    questions = persist.get_ai_news_answers_by_news_key(news_key)
+    lang_clean = (lang or "de").strip().lower()[:2]
+    if lang_clean not in ("de", "en"):
+        lang_clean = "de"
+    questions = persist.get_ai_news_answers_by_news_key(news_key, lang_clean)
     return {"questions": questions}
+
+
+@app.delete("/api/ai-answers-cache")
+def delete_ai_answer_cache(
+    url: str = Query("", description="URL der News"),
+    time_published: str = Query("", description="time_published der News"),
+    title: str = Query("", description="Titel der News"),
+    question: str = Query(..., description="Fragentext (wird für question_key gehasht)"),
+):
+    """Gecachte AI-Antwort zu dieser News+Frage aus der DB löschen."""
+    import persist
+    question_clean = (question or "").strip()
+    if not question_clean:
+        raise HTTPException(status_code=400, detail="question fehlt")
+    news_key = persist._ai_news_key((url or "").strip(), (time_published or "").strip(), (title or "").strip())
+    question_key = persist._ai_question_key(question_clean)
+    if not news_key or not question_key:
+        return {"ok": False, "deleted": False}
+    deleted = persist.delete_ai_news_answer(news_key, question_key)
+    log.info("AI-Cache gelöscht: news_key=%s question_key=%s deleted=%s", news_key[:8], question_key[:8], deleted)
+    return {"ok": True, "deleted": deleted}
 
 
 @app.get("/api/ai-questions")
@@ -1484,8 +1603,10 @@ def admin_get_table(
     table_name: str,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    sort_by: str | None = Query(None, description="Spalte zum Sortieren (Name aus columns)"),
+    sort_order: str = Query("asc", description="asc oder desc"),
 ):
-    """Inhalt einer Tabelle mit Spaltennamen. rowid wird mitgeliefert."""
+    """Inhalt einer Tabelle mit Spaltennamen. rowid wird mitgeliefert. sort_by/sort_order für Sortierung."""
     conn = _admin_get_conn()
     if not conn:
         raise HTTPException(status_code=404, detail="Datenbank nicht gefunden")
@@ -1493,9 +1614,17 @@ def admin_get_table(
         if not _admin_allowed_table(conn, table_name):
             raise HTTPException(status_code=400, detail="Tabelle nicht erlaubt")
         conn.row_factory = sqlite3.Row
-        cur = conn.execute(f'SELECT rowid, * FROM "{table_name}" LIMIT ? OFFSET ?', (limit, offset))
-        rows = cur.fetchall()
+        cur = conn.execute(f'SELECT rowid, * FROM "{table_name}" LIMIT 0')
         columns = ["rowid"] + [d[0] for d in cur.description[1:]]
+        order_clause = ""
+        if sort_by and sort_by in columns:
+            direction = "DESC" if (sort_order or "").lower() == "desc" else "ASC"
+            order_clause = f' ORDER BY "{sort_by}" {direction}'
+        cur = conn.execute(
+            f'SELECT rowid, * FROM "{table_name}"{order_clause} LIMIT ? OFFSET ?',
+            (limit, offset),
+        )
+        rows = cur.fetchall()
         total = conn.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
         data = [dict(zip(columns, row)) for row in rows]
         for row in data:

@@ -36,6 +36,7 @@
     "adminClearTable": "Tabelle leeren",
     "adminClearTableConfirm": "Tabelle \"{{table}}\" wirklich komplett leeren? Alle Zeilen werden gelöscht.",
     "adminClearTableHint": "Alle Zeilen dieser Tabelle löschen",
+    "adminSortHint": "Klicken zum Sortieren nach dieser Spalte",
     "adminActions": "Aktionen",
     "adminDescription": "SQLite-Tabellen einsehen, Zeilen bearbeiten und löschen.",
     "gemini25Flash": "Gemini 2.5 Flash",
@@ -77,6 +78,7 @@
     "aiLoading": "Lädt …",
     "aiFromCache": "Aus Cache.",
     "aiRefresh": "Aktualisieren",
+    "aiDeleteCache": "Antwort aus Cache löschen",
     "noNewsForSymbol": "Keine News für „{{symbol}}“. Anderes Symbol versuchen (z. B. AAPL, TSLA).",
     "noNewsDefault": "API lieferte keine Einträge. Symbol eingeben (z. B. TSLA, AAPL) und Aktualisieren.",
     "aiModel": "Modell",
@@ -108,7 +110,10 @@
     "axisIndices": "Indizes",
     "noData": "Noch keine Kurse. Klicke auf „Historie laden (USA)“ bei Staatsfinanzen oder unten auf „Historie laden“.",
     "loadHistory": "Historie laden",
-    "loadHistoryBusy": "Wird geladen…"
+    "loadHistoryBusy": "Wird geladen…",
+    "loadDax": "DAX laden",
+    "loadDaxBusy": "DAX wird geladen…",
+    "loadHint": "„Historie laden“ lädt S&P 500, DJIA, NASDAQ, BTC, ETH, LTC (FRED). DAX separat mit „DAX laden“."
   },
   "controls": {
     "country": "Land",
@@ -161,6 +166,7 @@
     "sp500": "S&P 500",
     "djia": "DJIA",
     "nasdaq": "NASDAQ",
+    "dax": "DAX",
     "btc": "BTC",
     "eth": "ETH",
     "ltc": "LTC"
