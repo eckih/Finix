@@ -15,6 +15,7 @@ i18n
   .use(initReactI18next)
   .init({
     resources,
+    lng: 'de',
     fallbackLng: 'de',
     supportedLngs: ['de', 'en'],
     interpolation: {

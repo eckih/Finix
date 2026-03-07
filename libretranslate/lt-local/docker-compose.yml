@@ -1,0 +1,17 @@
+services:
+  libretranslate:
+    image: libretranslate/libretranslate:latest
+    container_name: libretranslate
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - LT_UPDATE_MODELS=true    # Lädt Modelle beim ersten Start
+      - LT_LOAD_ONLY=en,de     # Optional: Nur bestimmte Sprachen laden (spart Platz)
+    volumes:
+      - ./lt-local:/home/libretranslate/.local:rw
+    healthcheck:
+      test: ["CMD-SHELL", "./venv/bin/python scripts/healthcheck.py"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

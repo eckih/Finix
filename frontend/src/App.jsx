@@ -95,6 +95,7 @@ export default function App() {
   const [newsFeed, setNewsFeed] = useState([])
   const [newsLoading, setNewsLoading] = useState(false)
   const [newsSymbol, setNewsSymbol] = useState('')
+  const [newsSource, setNewsSource] = useState('all')
   const [newsWsKey, setNewsWsKey] = useState(0)
   const [newsAiOpenIndex, setNewsAiOpenIndex] = useState(null)
   const [newsAiLoadingIndex, setNewsAiLoadingIndex] = useState(null)
@@ -111,6 +112,19 @@ export default function App() {
   const [newsAiSelectedModel, setNewsAiSelectedModel] = useState('')
   const [newsAiTestThinking, setNewsAiTestThinking] = useState('')
   const [newsAiTestStreamingAnswer, setNewsAiTestStreamingAnswer] = useState('')
+  const [adminTables, setAdminTables] = useState([])
+  const [adminSelectedTable, setAdminSelectedTable] = useState('')
+  const [adminData, setAdminData] = useState({ columns: [], rows: [], total: 0 })
+  const [adminLoading, setAdminLoading] = useState(false)
+  const [adminError, setAdminError] = useState(null)
+  const [adminEditRow, setAdminEditRow] = useState(null)
+  const [adminSaving, setAdminSaving] = useState(false)
+  const [adminPageSize, setAdminPageSize] = useState(50)
+  const [adminOffset, setAdminOffset] = useState(0)
+  const [aiPresetQuestions, setAiPresetQuestions] = useState([])
+  const [aiQuestionsConfig, setAiQuestionsConfig] = useState([])
+  const [aiQuestionsConfigLoading, setAiQuestionsConfigLoading] = useState(false)
+  const [aiQuestionsConfigSaving, setAiQuestionsConfigSaving] = useState(false)
 
   useEffect(() => {
     if (newsAiOpenIndex === null) return
@@ -141,6 +155,158 @@ export default function App() {
   useEffect(() => {
     if (view === 'konfiguration') loadLmStudioModels()
   }, [view, loadLmStudioModels])
+
+  const loadAiPresetQuestions = useCallback(async (lang) => {
+    const l = (lang || i18n.language || 'de').startsWith('en') ? 'en' : 'de'
+    try {
+      const res = await fetch(`${API}/ai-questions?lang=${encodeURIComponent(l)}`)
+      const data = await res.json().catch(() => ({}))
+      setAiPresetQuestions(Array.isArray(data.questions) ? data.questions : [])
+    } catch {
+      setAiPresetQuestions([])
+    }
+  }, [i18n.language])
+
+  const loadAiQuestionsConfig = useCallback(async () => {
+    setAiQuestionsConfigLoading(true)
+    try {
+      const res = await fetch(`${API}/ai-questions`)
+      const data = await res.json().catch(() => ({}))
+      const list = Array.isArray(data.questions) ? data.questions : []
+      setAiQuestionsConfig(list.map(q => ({ key: q.key || '', text_de: q.text_de || '', text_en: q.text_en || '', sort_order: q.sort_order ?? 0 })))
+    } catch {
+      setAiQuestionsConfig([])
+    } finally {
+      setAiQuestionsConfigLoading(false)
+    }
+  }, [])
+
+  const saveAiQuestionsConfig = useCallback(async () => {
+    const list = aiQuestionsConfig.filter(q => (q.text_de || q.text_en || '').trim())
+    if (list.length === 0) return
+    setAiQuestionsConfigSaving(true)
+    try {
+      const res = await fetch(`${API}/ai-questions`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(list.map((q, i) => ({ key: (q.key || '').trim() || `q${i}`, text_de: (q.text_de || '').trim(), text_en: (q.text_en || '').trim(), sort_order: q.sort_order ?? i }))),
+      })
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText)
+      setAdminError(null)
+      await loadAiQuestionsConfig()
+      await loadAiPresetQuestions(i18n.language)
+    } catch (e) {
+      setAdminError(e.message)
+    } finally {
+      setAiQuestionsConfigSaving(false)
+    }
+  }, [aiQuestionsConfig, loadAiQuestionsConfig, loadAiPresetQuestions, i18n.language])
+
+  useEffect(() => {
+    if (view === 'news') loadAiPresetQuestions(i18n.language)
+  }, [view, i18n.language, loadAiPresetQuestions])
+
+  useEffect(() => {
+    if (view === 'konfiguration') loadAiQuestionsConfig()
+  }, [view, loadAiQuestionsConfig])
+
+  const loadAdminTables = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/admin/tables`)
+      const data = await res.json().catch(() => ({}))
+      setAdminTables(data.tables || [])
+      setAdminError(data.error || null)
+      setAdminSelectedTable((prev) => (prev || (data.tables || [])[0] || ''))
+    } catch (e) {
+      setAdminTables([])
+      setAdminError(e.message)
+    }
+  }, [])
+
+  const loadAdminTable = useCallback(async (offset = null, limit = null) => {
+    if (!adminSelectedTable) {
+      setAdminData({ columns: [], rows: [], total: 0 })
+      return
+    }
+    const off = offset ?? adminOffset
+    const lim = limit ?? adminPageSize
+    setAdminLoading(true)
+    setAdminError(null)
+    try {
+      const res = await fetch(`${API}/admin/table/${encodeURIComponent(adminSelectedTable)}?limit=${lim}&offset=${off}`)
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || data.error || res.statusText)
+      setAdminData({ columns: data.columns || [], rows: data.rows || [], total: data.total ?? 0 })
+    } catch (e) {
+      setAdminData({ columns: [], rows: [], total: 0 })
+      setAdminError(e.message)
+    } finally {
+      setAdminLoading(false)
+    }
+  }, [adminSelectedTable, adminOffset, adminPageSize])
+
+  useEffect(() => {
+    if (view === 'admin') loadAdminTables()
+  }, [view, loadAdminTables])
+
+  useEffect(() => {
+    if (view === 'admin' && adminSelectedTable) loadAdminTable(adminOffset, adminPageSize)
+  }, [view, adminSelectedTable, adminOffset, adminPageSize, loadAdminTable])
+
+  const adminGoToPage = useCallback((newOffset) => {
+    setAdminOffset((prev) => Math.max(0, newOffset))
+  }, [])
+
+  const adminSaveRow = useCallback(async (row) => {
+    if (!adminSelectedTable || !row) return
+    setAdminSaving(true)
+    try {
+      const res = await fetch(`${API}/admin/table/${encodeURIComponent(adminSelectedTable)}/row`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(row),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || data.error || res.statusText)
+      setAdminEditRow(null)
+      loadAdminTable()
+    } catch (e) {
+      setAdminError(e.message)
+    } finally {
+      setAdminSaving(false)
+    }
+  }, [adminSelectedTable, loadAdminTable])
+
+  const adminDeleteRow = useCallback(async (rowid) => {
+    if (!adminSelectedTable || rowid == null) return
+    if (!window.confirm(t('config.adminDelete') + ' rowid ' + rowid + '?')) return
+    try {
+      const res = await fetch(`${API}/admin/table/${encodeURIComponent(adminSelectedTable)}/row/${rowid}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || data.error || res.statusText)
+      loadAdminTable()
+    } catch (e) {
+      setAdminError(e.message)
+    }
+  }, [adminSelectedTable, loadAdminTable])
+
+  const adminClearTable = useCallback(async () => {
+    if (!adminSelectedTable) return
+    if (!window.confirm(t('config.adminClearTableConfirm', { table: adminSelectedTable }))) return
+    setAdminLoading(true)
+    setAdminError(null)
+    try {
+      const res = await fetch(`${API}/admin/table/${encodeURIComponent(adminSelectedTable)}/clear`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || data.error || res.statusText)
+      setAdminOffset(0)
+      loadAdminTable(0, adminPageSize)
+    } catch (e) {
+      setAdminError(e.message)
+    } finally {
+      setAdminLoading(false)
+    }
+  }, [adminSelectedTable, loadAdminTable, adminPageSize, t])
 
   const testLmStudio = useCallback(async () => {
     setNewsAiTestLoading(true)
@@ -309,11 +475,12 @@ export default function App() {
 
   const newsWsRef = useRef(null)
 
-  const loadNewsHttp = useCallback(async (symbol, forceRefresh = false) => {
+  const loadNewsHttp = useCallback(async (symbol, forceRefresh = false, source = newsSource) => {
     const sym = (symbol || '').trim()
+    const lang = i18n.language && i18n.language.startsWith('en') ? 'en' : 'de'
     setError(null)
     try {
-      const res = await fetch(`${API}/news?symbol=${encodeURIComponent(sym)}&limit=15${forceRefresh ? '&refresh=1' : ''}`)
+      const res = await fetch(`${API}/news?symbol=${encodeURIComponent(sym)}&limit=15${forceRefresh ? '&refresh=1' : ''}&source=${encodeURIComponent(source)}&lang=${encodeURIComponent(lang)}`)
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
         setNewsFeed([])
@@ -331,19 +498,23 @@ export default function App() {
     } finally {
       setNewsLoading(false)
     }
-  }, [t])
+  }, [t, newsSource, i18n.language])
 
   useEffect(() => {
     if (view !== 'news') return
     const sym = (newsSymbol || '').trim()
+    const lang = i18n.language && i18n.language.startsWith('en') ? 'en' : 'de'
     setNewsLoading(true)
     setError(null)
-    loadNewsHttp(sym)
+    loadNewsHttp(sym, false, newsSource)
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = window.location.host
     const path = '/api/news/ws'
-    const qs = sym ? `?symbol=${encodeURIComponent(sym)}` : ''
-    const wsUrl = `${protocol}//${host}${path}${qs}`
+    const params = new URLSearchParams()
+    if (sym) params.set('symbol', sym)
+    params.set('source', newsSource)
+    params.set('lang', lang)
+    const wsUrl = `${protocol}//${host}${path}?${params.toString()}`
     const ws = new WebSocket(wsUrl)
     newsWsRef.current = ws
     ws.onopen = () => {}
@@ -366,52 +537,15 @@ export default function App() {
       ws.close()
       newsWsRef.current = null
     }
-  }, [view, newsSymbol, newsWsKey, loadNewsHttp])
+  }, [view, newsSymbol, newsSource, newsWsKey, loadNewsHttp, i18n.language])
 
   const refreshNews = useCallback(() => {
     setNewsWsKey((k) => k + 1)
     setNewsLoading(true)
-    loadNewsHttp((newsSymbol || '').trim(), true)
-  }, [loadNewsHttp, newsSymbol])
+    loadNewsHttp((newsSymbol || '').trim(), true, newsSource)
+  }, [loadNewsHttp, newsSymbol, newsSource])
 
-  const newsTranslateBatchRef = useRef(0)
-  useEffect(() => {
-    if (view !== 'news') return
-    setNewsTranslations({})
-    newsTranslateBatchRef.current += 1
-  }, [view, newsSymbol, i18n.language])
-
-  // Übersetzungen im Hintergrund (blockiert nicht); Tooltip zeigt Übersetzung wenn fertig
-  useEffect(() => {
-    if (!newsFeed.length || view !== 'news') return
-    const targetLang = i18n.language && i18n.language.startsWith('en') ? 'en' : 'de'
-    if (targetLang === 'en') return
-    const thisBatch = newsTranslateBatchRef.current
-    const maxItems = Math.min(20, newsFeed.length)
-    const delay = (ms) => new Promise((r) => setTimeout(r, ms))
-    const request = (i, field, raw) => {
-      if (!raw || !String(raw).trim()) return
-      const key = `${i}_${field}_${targetLang}`
-      const q = encodeURIComponent(String(raw).slice(0, 500))
-      fetch(`${API}/translate?text=${q}&target=${targetLang}`)
-        .then((r) => (r.ok ? r.json() : { translated: '' }))
-        .then((data) => {
-          if (thisBatch !== newsTranslateBatchRef.current) return
-          const translated = data.translated && String(data.translated).trim()
-          if (!translated) return
-          setNewsTranslations((prev) => ({ ...prev, [key]: translated }))
-        })
-        .catch(() => {})
-    }
-    let step = 0
-    for (let i = 0; i < maxItems; i++) {
-      const item = newsFeed[i]
-      const t = step * 80
-      step++
-      delay(t).then(() => request(i, 'title', item.title))
-      delay(t + 40).then(() => request(i, 'summary', item.summary))
-    }
-  }, [newsFeed, i18n.language, view])
+  // Übersetzungen kommen vom Backend (einmalig pro Meldung in DB gespeichert), keine zusätzlichen /api/translate-Aufrufe
 
   // Update-Check: aktuelle Version vs. letztes GitHub-Release
   useEffect(() => {
@@ -745,6 +879,20 @@ export default function App() {
           >
             {t('menu.konfiguration')}
           </button>
+          <button
+            type="button"
+            onClick={() => setView('admin')}
+            style={{
+              padding: '0.35rem 0.75rem',
+              border: view === 'admin' ? '2px solid #2563eb' : '1px solid #ccc',
+              borderRadius: 6,
+              background: view === 'admin' ? '#eff6ff' : '#fff',
+              cursor: 'pointer',
+              fontSize: '0.95rem',
+            }}
+          >
+            {t('menu.admin')}
+          </button>
         </nav>
         <div style={{ marginTop: '0.5rem', fontSize: '0.9rem' }}>
           <button
@@ -1035,6 +1183,30 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
+              {(stats.news_total != null || (stats.news_by_symbol && stats.news_by_symbol.length > 0)) && (
+                <div>
+                  <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>{t('statistik.newsTotal')}</h3>
+                  <p style={{ margin: '0 0 0.5rem', fontSize: '0.95rem' }}>{Number(stats.news_total || 0).toLocaleString(locale)}</p>
+                  {stats.news_by_symbol && stats.news_by_symbol.length > 0 && (
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
+                          <th style={{ textAlign: 'left', padding: '0.5rem' }}>{t('statistik.symbol')}</th>
+                          <th style={{ textAlign: 'right', padding: '0.5rem' }}>{t('statistik.count')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(stats.news_by_symbol || []).map((row, i) => (
+                          <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                            <td style={{ padding: '0.5rem' }}>{row.symbol}</td>
+                            <td style={{ textAlign: 'right', padding: '0.5rem' }}>{Number(row.count).toLocaleString(locale)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )}
             </div>
           </>
         ) : null}
@@ -1171,15 +1343,214 @@ export default function App() {
           )}
         </div>
       </section>
+      <section style={{ background: '#fff', padding: '1rem', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', marginBottom: '1.5rem' }}>
+        <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem', color: '#334155' }}>{t('config.aiPresetQuestionsTitle')}</h3>
+        <p style={{ margin: '0 0 0.75rem', fontSize: '0.9rem', color: '#64748b' }}>{t('config.aiPresetQuestionsHint')}</p>
+        {aiQuestionsConfigLoading ? (
+          <p style={{ color: '#64748b', margin: 0 }}>{t('news.loading')}</p>
+        ) : (
+          <>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1rem' }}>
+              {aiQuestionsConfig.map((q, idx) => (
+                <div key={idx} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.5rem', padding: '0.5rem', background: '#f8fafc', borderRadius: 6, border: '1px solid #e2e8f0' }}>
+                  <input
+                    type="text"
+                    placeholder={t('config.aiQuestionKey')}
+                    value={q.key}
+                    onChange={(e) => setAiQuestionsConfig(prev => prev.map((r, i) => i === idx ? { ...r, key: e.target.value } : r))}
+                    style={{ width: 80, padding: '0.35rem 0.5rem', fontSize: '0.85rem', border: '1px solid #cbd5e1', borderRadius: 4 }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="DE"
+                    value={q.text_de}
+                    onChange={(e) => setAiQuestionsConfig(prev => prev.map((r, i) => i === idx ? { ...r, text_de: e.target.value } : r))}
+                    style={{ flex: '1', minWidth: 180, padding: '0.35rem 0.5rem', fontSize: '0.85rem', border: '1px solid #cbd5e1', borderRadius: 4 }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="EN"
+                    value={q.text_en}
+                    onChange={(e) => setAiQuestionsConfig(prev => prev.map((r, i) => i === idx ? { ...r, text_en: e.target.value } : r))}
+                    style={{ flex: '1', minWidth: 180, padding: '0.35rem 0.5rem', fontSize: '0.85rem', border: '1px solid #cbd5e1', borderRadius: 4 }}
+                  />
+                  <input
+                    type="number"
+                    min={0}
+                    value={q.sort_order}
+                    onChange={(e) => setAiQuestionsConfig(prev => prev.map((r, i) => i === idx ? { ...r, sort_order: parseInt(e.target.value, 10) || 0 } : r))}
+                    style={{ width: 56, padding: '0.35rem 0.5rem', fontSize: '0.85rem', border: '1px solid #cbd5e1', borderRadius: 4 }}
+                    title={t('config.aiQuestionSortOrder')}
+                  />
+                  <button type="button" onClick={() => setAiQuestionsConfig(prev => prev.filter((_, i) => i !== idx))} style={{ padding: '0.35rem 0.5rem', fontSize: '0.85rem', background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', borderRadius: 4, cursor: 'pointer' }}>{t('config.adminDelete')}</button>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button type="button" onClick={() => setAiQuestionsConfig(prev => [...prev, { key: '', text_de: '', text_en: '', sort_order: prev.length }])} style={{ padding: '0.4rem 0.75rem', fontSize: '0.9rem', background: '#e2e8f0', color: '#334155', border: '1px solid #cbd5e1', borderRadius: 6, cursor: 'pointer' }}>{t('config.aiPresetQuestionsAdd')}</button>
+              <button type="button" onClick={saveAiQuestionsConfig} disabled={aiQuestionsConfigSaving || aiQuestionsConfig.length === 0} style={{ padding: '0.4rem 0.75rem', fontSize: '0.9rem', background: aiQuestionsConfigSaving || aiQuestionsConfig.length === 0 ? '#94a3b8' : '#2563eb', color: '#fff', border: 'none', borderRadius: 6, cursor: aiQuestionsConfigSaving || aiQuestionsConfig.length === 0 ? 'not-allowed' : 'pointer' }}>{aiQuestionsConfigSaving ? t('news.loading') : t('config.adminSave')}</button>
+            </div>
+            {adminError && <p style={{ margin: '0.5rem 0 0', color: '#b91c1c', fontSize: '0.9rem' }}>{adminError}</p>}
+          </>
+        )}
+      </section>
+      <section style={{ background: '#fff', padding: '1rem', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', marginBottom: '1.5rem' }}>
+        <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem', color: '#334155' }}>{t('config.adminTitle')}</h3>
+        <p style={{ margin: '0 0 0.75rem', fontSize: '0.9rem', color: '#64748b' }}>
+          {t('config.adminDescription')}
+        </p>
+        <button
+          type="button"
+          onClick={() => setView('admin')}
+          style={{
+            padding: '0.5rem 1rem',
+            fontSize: '0.95rem',
+            background: '#2563eb',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 6,
+            cursor: 'pointer',
+            fontWeight: 500,
+          }}
+        >
+          {t('config.adminOpenButton')}
+        </button>
+      </section>
+        </>
+      ) : view === 'admin' ? (
+        <>
+      <section style={{ background: '#fff', padding: '1.25rem', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', marginBottom: '1.5rem' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={() => setView('konfiguration')}
+              style={{ padding: '0.35rem 0.6rem', fontSize: '0.9rem', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 6, cursor: 'pointer' }}
+            >
+              ← {t('config.adminBack')}
+            </button>
+            <h2 style={{ margin: 0, fontSize: '1.2rem', color: '#0f172a' }}>{t('config.adminTitle')}</h2>
+          </div>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.9rem' }}>
+            <span>{t('config.adminTable')}:</span>
+            <select
+              value={adminSelectedTable}
+              onChange={(e) => { setAdminSelectedTable(e.target.value); setAdminEditRow(null); setAdminOffset(0) }}
+              style={{ padding: '0.4rem 0.6rem', fontSize: '0.9rem', minWidth: 160, border: '1px solid #cbd5e1', borderRadius: 6, background: '#fff' }}
+            >
+              <option value="">{t('config.adminSelectTable')}</option>
+              {adminTables.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.9rem' }}>
+            <span>{t('config.adminPageSize')}:</span>
+            <select
+              value={adminPageSize}
+              onChange={(e) => { setAdminPageSize(Number(e.target.value)); setAdminOffset(0) }}
+              style={{ padding: '0.4rem 0.6rem', fontSize: '0.9rem', border: '1px solid #cbd5e1', borderRadius: 6, background: '#fff' }}
+            >
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+              <option value={200}>200</option>
+            </select>
+          </label>
+          <button type="button" onClick={() => loadAdminTable(adminOffset, adminPageSize)} disabled={adminLoading || !adminSelectedTable} style={{ padding: '0.4rem 0.75rem', fontSize: '0.9rem', background: adminLoading || !adminSelectedTable ? '#94a3b8' : '#0f172a', color: '#fff', border: 'none', borderRadius: 6, cursor: adminLoading || !adminSelectedTable ? 'not-allowed' : 'pointer' }}>
+            {adminLoading ? '…' : t('config.adminRefresh')}
+          </button>
+          <button type="button" onClick={adminClearTable} disabled={adminLoading || !adminSelectedTable} style={{ padding: '0.4rem 0.75rem', fontSize: '0.9rem', background: adminLoading || !adminSelectedTable ? '#94a3b8' : '#b91c1c', color: '#fff', border: 'none', borderRadius: 6, cursor: adminLoading || !adminSelectedTable ? 'not-allowed' : 'pointer' }} title={t('config.adminClearTableHint')}>
+            {t('config.adminClearTable')}
+          </button>
+          {adminData.total > 0 && (
+            <span style={{ fontSize: '0.9rem', color: '#64748b' }}>
+              {t('config.adminTotal', { total: adminData.total })}
+              {adminData.total > adminPageSize && (
+                <span style={{ marginLeft: '0.5rem' }}>
+                  ({t('config.adminPage')} {Math.floor(adminOffset / adminPageSize) + 1} / {Math.ceil(adminData.total / adminPageSize)})
+                </span>
+              )}
+            </span>
+          )}
+        </div>
+        {adminData.total > adminPageSize && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            <button type="button" onClick={() => adminGoToPage(adminOffset - adminPageSize)} disabled={adminOffset <= 0} style={{ padding: '0.3rem 0.6rem', fontSize: '0.85rem', border: '1px solid #cbd5e1', borderRadius: 6, background: adminOffset <= 0 ? '#f1f5f9' : '#fff', cursor: adminOffset <= 0 ? 'not-allowed' : 'pointer' }}>
+              {t('config.adminPrev')}
+            </button>
+            <button type="button" onClick={() => adminGoToPage(adminOffset + adminPageSize)} disabled={adminOffset + adminPageSize >= adminData.total} style={{ padding: '0.3rem 0.6rem', fontSize: '0.85rem', border: '1px solid #cbd5e1', borderRadius: 6, background: adminOffset + adminPageSize >= adminData.total ? '#f1f5f9' : '#fff', cursor: adminOffset + adminPageSize >= adminData.total ? 'not-allowed' : 'pointer' }}>
+              {t('config.adminNext')}
+            </button>
+          </div>
+        )}
+        {adminError && <div role="alert" style={{ marginBottom: '0.75rem', padding: '0.6rem 0.75rem', fontSize: '0.9rem', color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6 }}>{t('config.adminError')}: {adminError}</div>}
+        {adminData.columns.length > 0 && (
+          <div style={{ overflowX: 'auto', maxHeight: '60vh', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+              <thead style={{ position: 'sticky', top: 0, background: '#0f172a', color: '#fff', zIndex: 1 }}>
+                <tr>
+                  {adminData.columns.map((col) => (
+                    <th key={col} style={{ padding: '0.5rem 0.6rem', textAlign: 'left', borderBottom: '1px solid #334155', whiteSpace: 'nowrap' }}>{col}</th>
+                  ))}
+                  <th style={{ padding: '0.5rem 0.6rem', borderBottom: '1px solid #334155', width: 140, textAlign: 'right' }}>{t('config.adminActions')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {adminData.rows.map((row, idx) => (
+                  <tr key={row.rowid ?? idx} style={{ background: adminEditRow?.rowid === row.rowid ? '#fef9c3' : idx % 2 ? '#f8fafc' : undefined }}>
+                    {adminEditRow?.rowid === row.rowid ? (
+                      <>
+                        {adminData.columns.map((col) => (
+                          <td key={col} style={{ padding: '0.3rem 0.5rem', borderBottom: '1px solid #e2e8f0', verticalAlign: 'middle' }}>
+                            {col === 'rowid' ? String(row[col]) : (
+                              <input
+                                value={adminEditRow[col] ?? ''}
+                                onChange={(e) => setAdminEditRow((prev) => ({ ...prev, [col]: e.target.value }))}
+                                style={{ width: '100%', minWidth: 80, padding: '0.25rem 0.4rem', fontSize: '0.85rem', boxSizing: 'border-box', border: '1px solid #cbd5e1', borderRadius: 4 }}
+                              />
+                            )}
+                          </td>
+                        ))}
+                        <td style={{ padding: '0.3rem 0.5rem', borderBottom: '1px solid #e2e8f0', textAlign: 'right' }}>
+                          <button type="button" onClick={() => adminSaveRow(adminEditRow)} disabled={adminSaving} style={{ marginRight: 6, padding: '0.25rem 0.5rem', fontSize: '0.8rem', background: '#059669', color: '#fff', border: 'none', borderRadius: 4, cursor: adminSaving ? 'not-allowed' : 'pointer' }}>{t('config.adminSave')}</button>
+                          <button type="button" onClick={() => setAdminEditRow(null)} style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', background: '#64748b', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>{t('config.adminCancel')}</button>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        {adminData.columns.map((col) => (
+                          <td key={col} style={{ padding: '0.45rem 0.6rem', borderBottom: '1px solid #e2e8f0', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }} title={String(row[col] ?? '')}>{String(row[col] ?? '')}</td>
+                        ))}
+                        <td style={{ padding: '0.45rem 0.6rem', borderBottom: '1px solid #e2e8f0', textAlign: 'right' }}>
+                          <button type="button" onClick={() => setAdminEditRow({ ...row })} style={{ marginRight: 6, padding: '0.25rem 0.5rem', fontSize: '0.8rem', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>{t('config.adminEdit')}</button>
+                          <button type="button" onClick={() => adminDeleteRow(row.rowid)} style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>{t('config.adminDelete')}</button>
+                        </td>
+                      </>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
         </>
       ) : view === 'news' ? (
         <>
       <section style={{ background: '#fff', padding: '1rem', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', marginBottom: '1.5rem' }}>
         <h2 style={{ margin: '0 0 0.25rem', fontSize: '1.1rem' }}>{t('news.title')}</h2>
-        <p style={{ margin: '0 0 0.5rem', fontSize: '0.8rem', color: '#64748b' }}>{t('news.symbolHint')} {t('news.tooltipHint')}</p>
+        <p style={{ margin: '0 0 0.5rem', fontSize: '0.8rem', color: '#64748b' }}>{t('news.symbolHint')} {newsSource === 'all' ? t('news.sourceAllHint') : newsSource === 'finnhub' ? t('news.sourceFinnhubHint') : t('news.tooltipHint')}</p>
         <p style={{ margin: '0 0 1rem', fontSize: '0.8rem', color: '#64748b' }}>
-          {t('news.sourceAlphaVantage')}:{' '}
-          <a href="https://www.alphavantage.co/" target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb' }}>alphavantage.co</a>
+          {newsSource === 'all' ? (
+            <> {t('news.sourceAll')}: <a href="https://www.alphavantage.co/" target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb' }}>alphavantage.co</a>, <a href="https://finnhub.io/" target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb' }}>finnhub.io</a> </>
+          ) : newsSource === 'finnhub' ? (
+            <> {t('news.sourceFinnhub')}: <a href="https://finnhub.io/" target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb' }}>finnhub.io</a> </>
+          ) : (
+            <> {t('news.sourceAlphaVantage')}: <a href="https://www.alphavantage.co/" target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb' }}>alphavantage.co</a> </>
+          )}
         </p>
         {error && view === 'news' && (
           <div role="alert" style={{ padding: '0.75rem', background: '#fef2f2', color: '#b91c1c', borderRadius: 6, marginBottom: '1rem', fontSize: '0.9rem' }}>
@@ -1187,6 +1558,18 @@ export default function App() {
           </div>
         )}
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.95rem' }}>
+            <span>{t('news.newsSource')}:</span>
+            <select
+              value={newsSource}
+              onChange={(e) => { setNewsSource(e.target.value); setNewsWsKey((k) => k + 1); setNewsLoading(true); loadNewsHttp((newsSymbol || '').trim(), true, e.target.value); }}
+              style={{ padding: '0.35rem 0.5rem', fontSize: '0.9rem', border: '1px solid #cbd5e1', borderRadius: 6, background: '#fff' }}
+            >
+              <option value="all">{t('news.sourceAll')}</option>
+              <option value="alpha_vantage">{t('news.sourceAlphaVantage')}</option>
+              <option value="finnhub">{t('news.sourceFinnhub')}</option>
+            </select>
+          </label>
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.95rem' }}>
             <span>{t('news.symbol')}:</span>
             <input
@@ -1230,47 +1613,41 @@ export default function App() {
               const sentiment = item.ticker_sentiment?.[0]
               const sentLabel = sentiment?.ticker_sentiment_label
               const sentScore = sentiment?.ticker_sentiment_score
-              const newsLang = i18n.language && i18n.language.startsWith('en') ? 'en' : 'de'
-              const rawTitle = (item.title ?? '').trim()
-              const rawSummary = (item.summary ?? '').trim()
-              const trTitle = newsTranslations[`${i}_title_${newsLang}`]
-              const trSummary = newsTranslations[`${i}_summary_${newsLang}`]
-              const titleTooltip = newsLang === 'de'
-                ? (trTitle && trTitle.trim() !== rawTitle ? trTitle : t('news.translating'))
-                : (trTitle ?? item.title ?? '')
-              const summaryTooltip = newsLang === 'de'
-                ? (trSummary && trSummary.trim() !== rawSummary ? trSummary : t('news.translating'))
-                : (trSummary ?? item.summary ?? '')
+              const displayTitle = item.title || ''
+              const displaySummary = item.summary || ''
+              const apiSource = item.api_source || newsSource
+              const sourceBg = apiSource === 'finnhub' ? '#dcfce7' : apiSource === 'alpha_vantage' ? '#dbeafe' : '#f8fafc'
+              const sourceBorder = apiSource === 'finnhub' ? '#86efac' : apiSource === 'alpha_vantage' ? '#93c5fd' : '#e2e8f0'
               return (
                 <li
                   key={i}
                   style={{
                     padding: '1rem',
-                    background: '#f8fafc',
-                    border: '1px solid #e2e8f0',
+                    background: sourceBg,
+                    border: `1px solid ${sourceBorder}`,
                     borderRadius: 8,
                   }}
+                  title={apiSource === 'finnhub' ? t('news.sourceFinnhub') : apiSource === 'alpha_vantage' ? t('news.sourceAlphaVantage') : ''}
                 >
                   <div style={{ marginBottom: '0.5rem' }}>
                     <a
                       href={item.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      title={titleTooltip}
                       style={{ fontWeight: 600, color: '#1e40af', textDecoration: 'none', fontSize: '1rem' }}
                     >
-                      {item.title || t('news.noTitle')}
+                      {displayTitle || t('news.noTitle')}
                     </a>
                   </div>
-                  {item.summary && (
-                    <p
-                      title={summaryTooltip}
-                      style={{ margin: '0.5rem 0', fontSize: '0.9rem', color: '#475569', lineHeight: 1.45 }}
-                    >
-                      {item.summary.slice(0, 300)}{item.summary.length > 300 ? '…' : ''}
+                  {displaySummary && (
+                    <p style={{ margin: '0.5rem 0', fontSize: '0.9rem', color: '#475569', lineHeight: 1.45 }}>
+                      {displaySummary}
                     </p>
                   )}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', fontSize: '0.8rem', color: '#64748b', marginTop: '0.5rem' }}>
+                    {newsSource === 'all' && item.api_source && (
+                      <span style={{ fontWeight: 600, color: apiSource === 'finnhub' ? '#166534' : '#1e40af' }}>{apiSource === 'finnhub' ? t('news.sourceFinnhub') : t('news.sourceAlphaVantage')}</span>
+                    )}
                     {item.source && <span>{t('news.source')}: {item.source}</span>}
                     {dateStr && <span>{formatDate(dateStr.slice(0, 10))} {dateStr.slice(11, 16)}</span>}
                     {sentLabel != null && (
@@ -1313,24 +1690,18 @@ export default function App() {
                           zIndex: 10,
                         }}
                       >
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => askAi(i, t('news.aiQuestionStocks'), item.title, item.summary)}
-                          disabled={newsAiLoadingIndex === i}
-                          style={{ display: 'block', width: '100%', padding: '0.5rem 0.75rem', textAlign: 'left', border: 'none', background: 'none', cursor: newsAiLoadingIndex === i ? 'wait' : 'pointer', fontSize: '0.9rem' }}
-                        >
-                          {t('news.aiQuestionStocks')}
-                        </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => askAi(i, t('news.aiQuestionBtc'), item.title, item.summary)}
-                          disabled={newsAiLoadingIndex === i}
-                          style={{ display: 'block', width: '100%', padding: '0.5rem 0.75rem', textAlign: 'left', border: 'none', background: 'none', cursor: newsAiLoadingIndex === i ? 'wait' : 'pointer', fontSize: '0.9rem' }}
-                        >
-                          {t('news.aiQuestionBtc')}
-                        </button>
+                        {(aiPresetQuestions.length ? aiPresetQuestions : [{ key: 'stocks', text: t('news.aiQuestionStocks') }, { key: 'btc', text: t('news.aiQuestionBtc') }]).map((q) => (
+                          <button
+                            key={q.key}
+                            type="button"
+                            role="menuitem"
+                            onClick={() => askAi(i, q.text, item.title, item.summary)}
+                            disabled={newsAiLoadingIndex === i}
+                            style={{ display: 'block', width: '100%', padding: '0.5rem 0.75rem', textAlign: 'left', border: 'none', background: 'none', cursor: newsAiLoadingIndex === i ? 'wait' : 'pointer', fontSize: '0.9rem' }}
+                          >
+                            {q.text}
+                          </button>
+                        ))}
                         <div style={{ padding: '0.5rem 0.75rem', borderTop: '1px solid #e2e8f0', display: 'flex', gap: 4 }}>
                           <input
                             type="text"

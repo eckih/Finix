@@ -4,8 +4,10 @@ FastAPI-Backend für Finanzdaten: API für History (SQLite) und Live-Abfrage.
 import asyncio
 import json
 import os
+import sqlite3
 import sys
 import threading
+import time
 from pathlib import Path
 
 # Projektroot (über backend/) für Imports
@@ -25,7 +27,7 @@ from backend import log_config
 log_config.setup_logging(ROOT / "data")
 log = log_config.get_logger(__name__)
 
-from fastapi import FastAPI, Query, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from starlette.requests import Request
@@ -784,6 +786,129 @@ async def post_ai_ask(body: AIAskBody):
 NEWS_CACHE_SEC = 300  # 5 Min. – API nur alle 5 Min. pro Symbol aufrufen
 _news_fetch_locks = {}  # symbol -> threading.Lock (kein doppelter API-Call pro Symbol)
 
+FINNHUB_API_KEY = (os.environ.get("FINNHUB_API_KEY") or "d6m5qj1r01qi0ajl0s9gd6m5qj1r01qi0ajl0sa0").strip()
+FINNHUB_SYMBOL_PREFIX = "FH_"
+
+
+def _finnhub_storage_key(symbol: str | None) -> str:
+    """Symbol für Finnhub in DB (z. B. FH_AAPL)."""
+    s = (symbol or "").strip().upper() or "AAPL"
+    return f"{FINNHUB_SYMBOL_PREFIX}{s}"
+
+
+def _fetch_finnhub_news(symbol: str, from_date: str, to_date: str):
+    """
+    Holt Company-News von Finnhub (from/to im Format YYYY-MM-DD).
+    Returns (list of normalized items, error_string or None).
+    Jedes Item: time_published (ISO), title, summary, url, source, payload mit finnhub_id.
+    """
+    import requests
+    from datetime import datetime
+    if not FINNHUB_API_KEY:
+        return [], "FINNHUB_API_KEY nicht gesetzt"
+    url = "https://finnhub.io/api/v1/company-news"
+    params = {
+        "symbol": (symbol or "AAPL").strip().upper(),
+        "from": from_date,
+        "to": to_date,
+        "token": FINNHUB_API_KEY,
+    }
+    try:
+        r = requests.get(url, params=params, timeout=15)
+        r.encoding = "utf-8"
+        r.raise_for_status()
+        data = r.json()
+        if not isinstance(data, list):
+            return [], "Ungültige Finnhub-Antwort"
+        out = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            dt = item.get("datetime")
+            if dt is None:
+                continue
+            try:
+                if isinstance(dt, (int, float)):
+                    time_pub = datetime.utcfromtimestamp(int(dt)).strftime("%Y%m%dT%H%M%S")
+                else:
+                    time_pub = str(dt)
+            except Exception:
+                time_pub = str(dt)
+            headline = (item.get("headline") or "").strip() or ""
+            summary = (item.get("summary") or "").strip() or ""
+            link = (item.get("url") or "").strip()
+            if not link:
+                link = "#id=" + str(item.get("id", ""))
+            src = (item.get("source") or "Finnhub").strip()
+            out.append({
+                "time_published": time_pub,
+                "title": headline,
+                "summary": summary,
+                "url": link,
+                "source": src,
+                "payload": {"finnhub_id": item.get("id")},
+            })
+        log.info("Finnhub: %d News geladen (symbol=%s, %s bis %s)", len(out), params["symbol"], from_date, to_date)
+        return out, None
+    except requests.exceptions.RequestException as e:
+        log.exception("Finnhub API fehlgeschlagen")
+        return [], str(e)
+    except Exception as e:
+        log.exception("Finnhub Verarbeitung fehlgeschlagen")
+        return [], str(e)
+
+
+def _get_finnhub_feed_sync(symbol: str | None, limit: int = 15, force_refresh: bool = False, lang: str = "de"):
+    """
+    Finnhub-News aus DB; bei Bedarf API (nur neue Meldungen: from last_fetched bis heute).
+    Original in DB; Übersetzung in payload.translated[lang] gespeichert und zurückgegeben.
+    """
+    import persist
+    from datetime import datetime, timezone, timedelta
+    sym = (symbol or "").strip().upper() or "AAPL"
+    storage_key = _finnhub_storage_key(symbol)
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    lang_key = (lang or "de").strip().lower()[:2] or "de"
+    # Zuerst aus DB laden: wenn Daten vorhanden und kein expliziter Refresh → keine API
+    if not force_refresh:
+        feed = persist.load_news_from_db(storage_key, limit, lang=None, return_payload=True)
+        if feed:
+            feed = _ensure_news_translations(feed, storage_key, lang_key)
+            log.info("Finnhub: News aus DB (symbol=%s, %d Einträge), keine API-Abfrage", storage_key, len(feed))
+            return feed, None
+    # API nur bei force_refresh oder leerer DB
+    key = storage_key
+    if key not in _news_fetch_locks:
+        _news_fetch_locks[key] = threading.Lock()
+    with _news_fetch_locks[key]:
+        last = persist.get_news_last_fetched(storage_key)
+        from_date = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+        if last:
+            try:
+                from_date = last[:10]
+            except Exception:
+                pass
+        if from_date > today:
+            from_date = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+        raw_list, err = _fetch_finnhub_news(sym, from_date, today)
+        if err:
+            cached = persist.load_news_from_db(storage_key, limit, lang=None, return_payload=True)
+            if cached:
+                cached = _ensure_news_translations(cached, storage_key, lang_key)
+                return cached, None
+            return [], err
+        feed_for_db = []
+        for it in raw_list:
+            payload = it.pop("payload", None) or {}
+            it["payload"] = payload
+            it["ticker_sentiment"] = None
+            feed_for_db.append(it)
+        persist.save_news_feed(storage_key, feed_for_db)
+    feed = persist.load_news_from_db(storage_key, limit, lang=None, return_payload=True)
+    feed = _ensure_news_translations(feed, storage_key, lang or "de")
+    return feed, None
+
 
 def _fetch_alpha_vantage_news(symbol: str | None, limit: int = 15):
     """Holt die neuesten News von Alpha Vantage (NEWS_SENTIMENT). Mit Symbol gefiltert; ohne Symbol Fallback AAPL."""
@@ -834,76 +959,166 @@ def _news_api_ticker(symbol: str | None) -> str:
     return s if s else "AAPL"
 
 
-def _get_news_feed_sync(symbol: str | None, limit: int = 15, force_refresh: bool = False):
+def _ensure_news_translations(feed: list, storage_key: str, lang: str) -> list:
     """
-    News aus DB liefern; nur bei Bedarf API aufrufen (max. 1x pro NEWS_CACHE_SEC pro Symbol).
+    Für jedes Feed-Item ohne gespeicherte Übersetzung in payload.translated[lang] einmalig übersetzen und in DB speichern.
+    Entfernt _payload aus den Items und setzt title/summary auf die (gespeicherte) Übersetzung.
+    """
+    import persist
+    lang_key = (lang or "de").strip().lower()[:2]
+    if lang_key not in ("de", "en"):
+        lang_key = "de"
+    out = []
+    translated_count = 0
+    from_cache_count = 0
+    for item in feed:
+        d = dict(item)
+        payload_raw = d.pop("_payload", None)
+        tr_container = (payload_raw or {}).get("payload") if isinstance((payload_raw or {}).get("payload"), dict) else (payload_raw or {})
+        trans = tr_container.get("translated") if isinstance(tr_container, dict) else (payload_raw or {}).get("translated")
+        has_translation = isinstance(trans, dict) and lang_key in trans
+        if lang_key == "en":
+            has_translation = True
+            d["title"] = d.get("title") or ""
+            d["summary"] = d.get("summary") or ""
+        elif has_translation:
+            from_cache_count += 1
+            tr = trans.get(lang_key) if isinstance(trans, dict) else None
+            if isinstance(tr, dict):
+                d["title"] = tr.get("title") or d.get("title") or ""
+                d["summary"] = tr.get("summary") or d.get("summary") or ""
+            log.debug("News-Übersetzung Item: cache=1 time_published=%s title_len=%d", d.get("time_published"), len(d.get("title") or ""))
+        else:
+            log.debug("News-Übersetzung Item: cache=0 time_published=%s title=%s…", d.get("time_published"), ((d.get("title") or "")[:40]))
+            title_en = (d.get("title") or "").strip()
+            summary_en = (d.get("summary") or "").strip()
+            tr_title = _translate_text(title_en, lang_key) if title_en else ""
+            tr_summary = _translate_text((summary_en or "")[:500], lang_key) if summary_en else ""
+            use_title = (tr_title or "").strip()
+            use_summary = (tr_summary or "").strip()
+            if not use_title or use_title == title_en:
+                use_title = title_en
+            if not use_summary or use_summary == summary_en:
+                use_summary = summary_en
+            if use_title != title_en or use_summary != summary_en:
+                translated_count += 1
+                row_key = d["symbol"] if "symbol" in d else storage_key
+                ok = persist.update_news_translation(
+                    row_key,
+                    d.get("time_published") or "",
+                    d.get("url") or "",
+                    lang_key,
+                    use_title,
+                    use_summary,
+                )
+                if not ok:
+                    log.warning("News-Übersetzung konnte nicht in DB gespeichert werden: symbol=%s time_published=%s url=%s", storage_key, d.get("time_published"), (d.get("url") or "")[:50])
+            else:
+                log.warning("News-Übersetzung fehlgeschlagen oder unverändert für: %s…", (title_en or "")[:60])
+            d["title"] = use_title or title_en
+            d["summary"] = use_summary or summary_en
+            log.debug("News-Übersetzung Item nach Übersetzung: time_published=%s titel_übersetzt=%s", d.get("time_published"), bool(use_title and use_title != title_en))
+            # Pause zwischen Übersetzungen, damit lokale LibreTranslate alle Meldungen schafft
+            if os.environ.get("LIBRETRANSLATE_URL"):
+                time.sleep(1.0)
+        out.append(d)
+    if translated_count or from_cache_count:
+        log.info("News lang=%s: %d aus Cache, %d neu übersetzt", lang_key, from_cache_count, translated_count)
+    return out
+
+
+def _get_news_feed_sync(symbol: str | None, limit: int = 15, force_refresh: bool = False, lang: str = "de"):
+    """
+    News aus DB liefern; API nur bei explizitem Refresh oder wenn DB leer ist (API-Abfragen reduzieren).
+    Fehlende Übersetzungen werden einmalig erzeugt und in der DB gespeichert.
     Returns (feed_list, error_string or None).
     """
     import persist
     from datetime import datetime, timezone
     storage_key = _news_storage_key(symbol)
-    now = datetime.now(timezone.utc)
+    lang_key = (lang or "de").strip().lower()[:2] or "de"
+    # Zuerst aus DB laden: wenn Daten vorhanden und kein expliziter Refresh → keine API
     if not force_refresh:
-        last = persist.get_news_last_fetched(storage_key)
-        if last:
-            try:
-                dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
-                if (now - dt).total_seconds() < NEWS_CACHE_SEC:
-                    feed = persist.load_news_from_db(storage_key, limit)
-                    if feed:
-                        log.info("News aus DB (symbol=%s, %d Einträge)", storage_key or "(Fallback)", len(feed))
-                        return feed, None
-            except Exception:
-                pass
+        feed = persist.load_news_from_db(storage_key, limit, lang=None, return_payload=True)
+        if feed:
+            feed = _ensure_news_translations(feed, storage_key, lang_key)
+            log.info("News aus DB (symbol=%s, %d Einträge), keine API-Abfrage", storage_key or "(Fallback)", len(feed))
+            return feed, None
+    # API nur bei force_refresh oder leerer DB
     key = storage_key or "__default__"
     if key not in _news_fetch_locks:
         _news_fetch_locks[key] = threading.Lock()
     with _news_fetch_locks[key]:
-        last = persist.get_news_last_fetched(storage_key)
-        if not force_refresh and last:
-            try:
-                dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
-                if (now - dt).total_seconds() < NEWS_CACHE_SEC:
-                    feed = persist.load_news_from_db(storage_key, limit)
-                    if feed:
-                        return feed, None
-            except Exception:
-                pass
         feed, err = _fetch_alpha_vantage_news(symbol, limit)
         if err:
-            cached = persist.load_news_from_db(storage_key, limit)
+            cached = persist.load_news_from_db(storage_key, limit, lang=None, return_payload=True)
             if cached:
+                cached = _ensure_news_translations(cached, storage_key, lang_key)
                 log.info("API-Fehler, News aus DB ausgeliefert (symbol=%s)", storage_key or "(Fallback)")
                 return cached, None
             return [], err
         persist.save_news_feed(storage_key, feed)
+        feed = persist.load_news_from_db(storage_key, limit, lang=None, return_payload=True)
+        feed = _ensure_news_translations(feed, storage_key, lang_key)
+    return feed, None
+
+
+def _get_news_feed_all_sync(limit: int = 30, lang: str = "de"):
+    """Alle News aus allen Quellen, zeitlich sortiert, nur aus DB (keine API)."""
+    import persist
+    lang_key = (lang or "de").strip().lower()[:2] or "de"
+    feed = persist.load_news_all_recent(limit=limit, lang=None, return_payload=True)
+    if not feed:
+        return [], None
+    feed = _ensure_news_translations(feed, "", lang_key)
+    log.info("News aus DB (alle Quellen, %d Einträge), keine API-Abfrage", len(feed))
     return feed, None
 
 
 @app.get("/api/news")
 def get_news(
+    request: Request,
     symbol: str = Query("", description="Ticker-Symbol (z. B. TSLA, AAPL)"),
     limit: int = Query(15, ge=1, le=50, description="Anzahl der neuesten Meldungen"),
     refresh: bool = Query(False, description="True = API-Abruf erzwingen (Rate-Limit beachten)"),
+    source: str = Query("all", description="News-Quelle: all, alpha_vantage oder finnhub"),
+    lang: str = Query("de", description="Anzeigesprache (de/en)"),
 ):
-    """News aus DB; bei Bedarf (alle 5 Min.) von Alpha Vantage nachladen. Keine doppelten API-Requests."""
+    """News aus DB; bei Bedarf von Alpha Vantage oder Finnhub nachladen. source=all: alle Quellen zeitlich sortiert."""
     symbol_clean = (symbol or "").strip().upper() or None
-    log.info("App: News abgefragt symbol=%s limit=%s refresh=%s", symbol_clean or "(ohne Filter)", limit, refresh)
-    feed, err = _get_news_feed_sync(symbol_clean, limit=limit, force_refresh=refresh)
+    src = (source or "all").strip().lower()
+    if src not in ("alpha_vantage", "finnhub", "all"):
+        src = "all"
+    lang = (lang or "").strip().lower()[:2]
+    if lang not in ("de", "en"):
+        accept = (request.headers.get("Accept-Language") or "").strip()
+        lang = "de" if (accept and "de" in (accept.split(",")[0] or "").lower()[:5]) else "de"
+    log.info("News abgefragt symbol=%s source=%s lang=%s", symbol_clean or "(ohne Filter)", src, lang)
+    if src == "all":
+        feed, err = _get_news_feed_all_sync(limit=min(limit * 2, 50), lang=lang)
+    elif src == "finnhub":
+        feed, err = _get_finnhub_feed_sync(symbol_clean, limit=limit, force_refresh=refresh, lang=lang)
+    else:
+        feed, err = _get_news_feed_sync(symbol_clean, limit=limit, force_refresh=refresh, lang=lang)
     if err:
         raise HTTPException(status_code=502, detail=err)
-    return {"symbol": symbol_clean or "", "feed": feed}
+    return {"symbol": symbol_clean or "", "feed": feed, "source": src}
 
 
 NEWS_WS_REFRESH_SEC = 5 * 60  # 5 Minuten
 
 
-async def _news_ws_sender(websocket: WebSocket, symbol: str | None):
-    """Sendet News aus DB; nur alle 5 Min. einmal API-Abruf pro Symbol."""
-    storage_key = _news_storage_key(symbol)
+async def _news_ws_sender(websocket: WebSocket, symbol: str | None, source: str = "all", lang: str = "de"):
+    """Sendet News aus DB. source: all | alpha_vantage | finnhub."""
+    storage_key = "all" if source == "all" else (_news_storage_key(symbol) if source == "alpha_vantage" else _finnhub_storage_key(symbol))
     try:
         while True:
-            feed, err = await asyncio.to_thread(_get_news_feed_sync, symbol, 15, False)
+            if source == "all":
+                feed, err = await asyncio.to_thread(_get_news_feed_all_sync, 30, lang or "de")
+            elif source == "finnhub":
+                feed, err = await asyncio.to_thread(_get_finnhub_feed_sync, symbol, 15, False, lang or "de")
+            else:
+                feed, err = await asyncio.to_thread(_get_news_feed_sync, symbol, 15, False, lang or "de")
             if err:
                 await websocket.send_json({"type": "error", "message": err})
             else:
@@ -911,6 +1126,7 @@ async def _news_ws_sender(websocket: WebSocket, symbol: str | None):
                     "type": "feed",
                     "symbol": storage_key,
                     "feed": feed,
+                    "source": source,
                 })
             await asyncio.sleep(NEWS_WS_REFRESH_SEC)
     except Exception as e:
@@ -919,14 +1135,23 @@ async def _news_ws_sender(websocket: WebSocket, symbol: str | None):
 
 @app.websocket("/api/news/ws")
 async def news_websocket(websocket: WebSocket):
-    """WebSocket für News: Verbindung offen halten, alle 5 Min. neueste News senden. Client kann Symbol per Query oder Nachricht senden."""
+    """WebSocket für News: Verbindung offen halten, alle 5 Min. neueste News senden. Client kann symbol, source, lang per Query oder Nachricht senden."""
     await websocket.accept()
     qs = (websocket.scope.get("query_string") or b"").decode("utf-8")
     symbol = None
-    if "symbol=" in qs:
-        symbol = qs.split("symbol=", 1)[1].split("&")[0].strip().upper() or None
-    log.info("News-WebSocket verbunden symbol=%s", symbol or "(ohne Filter)")
-    sender = asyncio.create_task(_news_ws_sender(websocket, symbol))
+    source = "all"
+    lang = "de"
+    for part in qs.split("&"):
+        if part.startswith("symbol="):
+            symbol = part.split("=", 1)[1].strip().upper() or None
+        elif part.startswith("source="):
+            s = part.split("=", 1)[1].strip().lower()
+            if s in ("alpha_vantage", "finnhub", "all"):
+                source = s
+        elif part.startswith("lang="):
+            lang = part.split("=", 1)[1].strip().lower()[:2] or "de"
+    log.info("News-WebSocket verbunden symbol=%s source=%s", symbol or "(ohne Filter)", source)
+    sender = asyncio.create_task(_news_ws_sender(websocket, symbol, source, lang))
     try:
         while True:
             try:
@@ -936,15 +1161,19 @@ async def news_websocket(websocket: WebSocket):
             try:
                 msg = json.loads(data)
                 new_sym = (msg.get("symbol") or "").strip().upper() or None
-                if new_sym != symbol:
-                    symbol = new_sym
+                new_src = (msg.get("source") or "").strip().lower()
+                if new_src not in ("alpha_vantage", "finnhub", "all"):
+                    new_src = source
+                new_lang = (msg.get("lang") or "").strip().lower()[:2] or lang
+                if new_sym != symbol or new_src != source or new_lang != lang:
+                    symbol, source, lang = new_sym, new_src, new_lang
                     sender.cancel()
                     try:
                         await sender
                     except asyncio.CancelledError:
                         pass
-                    sender = asyncio.create_task(_news_ws_sender(websocket, symbol))
-                    log.info("News-WebSocket Symbol geändert: %s", symbol or "(ohne Filter)")
+                    sender = asyncio.create_task(_news_ws_sender(websocket, symbol, source, lang))
+                    log.info("News-WebSocket geändert: symbol=%s source=%s", symbol or "(ohne Filter)", source)
             except (json.JSONDecodeError, TypeError):
                 pass
     except WebSocketDisconnect:
@@ -958,37 +1187,156 @@ async def news_websocket(websocket: WebSocket):
     log.info("News-WebSocket getrennt")
 
 
-def _translate_text(text: str, target_lang: str) -> str | None:
-    """Übersetzt Text mit MyMemory (en↔de). Blockiert nicht den Event-Loop (synchrone HTTP-Call)."""
+def _translate_text_libretranslate_local(text: str, target_lang: str) -> str | None:
+    """Lokale LibreTranslate-Instanz (z. B. http://localhost:5000 oder http://host.docker.internal:5000)."""
+    url_base = (os.environ.get("LIBRETRANSLATE_URL") or "").strip().rstrip("/")
+    if not url_base:
+        return None
     if not (text or text.strip()):
         return text or ""
     import requests
     target = (target_lang or "de").lower()[:2]
     if target not in ("de", "en"):
         target = "de"
-    # MyMemory: en|de oder de|en; News sind meist Englisch
-    langpair = "en|de" if target == "de" else "de|en" if target == "en" else "en|de"
-    # MyMemory Limit ~500 Zeichen pro Request
-    q = (text or "").strip()[:500]
+    q = (text or "").strip()[:2000]
     if not q:
         return text
+    url = url_base + "/translate"
+    last_err = None
+    for attempt in range(3):
+        try:
+            if attempt > 0:
+                time.sleep(1.0)
+            r = requests.post(
+                url,
+                json={"q": q, "source": "auto", "target": target},
+                headers={"User-Agent": "Finix/1.0", "Content-Type": "application/json"},
+                timeout=60,
+            )
+            r.encoding = "utf-8"
+            data = r.json() if r.content else {}
+            if r.status_code != 200:
+                last_err = f"HTTP {r.status_code}: {data.get('error') or r.text[:100]}"
+                if attempt < 2:
+                    continue
+                log.warning("LibreTranslate (lokal) %s", last_err)
+                return None
+            out = (data.get("translatedText") or "").strip()
+            if out and out != q:
+                return out
+            return None if target == "de" else text
+        except Exception as e:
+            last_err = str(e)
+            if attempt < 2:
+                continue
+            log.warning("LibreTranslate (lokal): %s", e)
+            return None
+    return None
+
+
+def _translate_text_simplytranslate(text: str, target_lang: str) -> str | None:
+    """Kostenlos, ohne API-Key: SimplyTranslate (https://api.simplytranslate.ai)."""
+    if not (text or text.strip()):
+        return text or ""
+    import requests
+    target = (target_lang or "de").lower()[:2]
+    if target not in ("de", "en"):
+        target = "de"
+    q = (text or "").strip()[:2000]
+    if not q:
+        return text
+    headers = {"User-Agent": "Finix/1.0", "Content-Type": "application/json"}
+    if os.environ.get("SIMPLYTRANSLATE_API_KEY"):
+        headers["X-API-Key"] = (os.environ.get("SIMPLYTRANSLATE_API_KEY") or "").strip()
+    try:
+        # "from": "auto" – manche Instanzen lehnen "en" mit 403 (无效的来源) ab
+        r = requests.post(
+            "https://api.simplytranslate.ai/translate",
+            json={"text": q, "from": "auto", "to": target},
+            headers=headers,
+            timeout=20,
+        )
+        r.encoding = "utf-8"
+        data = r.json() if r.content else {}
+        if r.status_code != 200:
+            log.warning("SimplyTranslate HTTP %s: %s", r.status_code, data.get("error") or data.get("details") or r.text[:200])
+            return None
+        out = (data.get("result") or "").strip()
+        if out and out != q:
+            return out
+        if data.get("error"):
+            log.warning("SimplyTranslate Fehler: %s", data.get("error"))
+        return None if target == "de" else text
+    except Exception as e:
+        log.warning("SimplyTranslate: %s", e)
+        return None
+
+
+def _translate_text(text: str, target_lang: str) -> str | None:
+    """Übersetzt Text. Für DE und EN: zuerst lokale LibreTranslate, dann SimplyTranslate, dann MyMemory."""
+    if not (text or text.strip()):
+        return text or ""
+    import requests
+    target = (target_lang or "de").lower()[:2]
+    if target not in ("de", "en"):
+        target = "de"
+    q = (text or "").strip()[:2000]
+    if not q:
+        return text
+
+    # LibreTranslate und SimplyTranslate für beide Richtungen (de und en)
+    if os.environ.get("LIBRETRANSLATE_URL"):
+        out = _translate_text_libretranslate_local(text, target_lang)
+        if out:
+            return out
+    out = _translate_text_simplytranslate(text, target_lang)
+    if out:
+        return out
+
+    # MyMemory (mit E-Mail höheres Limit)
+    q_mm = q[:500]
+    params = {"q": q_mm, "langpair": "en|de" if target == "de" else "de|en"}
+    if os.environ.get("MYMEMORY_EMAIL"):
+        params["de"] = (os.environ.get("MYMEMORY_EMAIL") or "").strip()
     try:
         r = requests.get(
             "https://api.mymemory.translated.net/get",
-            params={"q": q, "langpair": langpair},
-            timeout=8,
+            params=params,
+            headers={"User-Agent": "Finix/1.0"},
+            timeout=15,
         )
         r.raise_for_status()
+        r.encoding = "utf-8"
         data = r.json()
         out = (data.get("responseData") or {}).get("translatedText")
-        if out and out.strip() and out.strip() != q.strip():
-            return out
+        if out and isinstance(out, str) and out.strip() and out.strip() != q_mm.strip():
+            return out.strip()
         if target == "de":
             return None
         return text
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code == 429:
+            log.info("MyMemory Limit (429)")
+        else:
+            log.warning("MyMemory: %s", e)
+        if target == "de":
+            if os.environ.get("LIBRETRANSLATE_URL"):
+                out = _translate_text_libretranslate_local(text, target_lang)
+                if out:
+                    return out
+            out = _translate_text_simplytranslate(text, target_lang)
+            return out if out else None
+        return text
     except Exception as e:
-        log.debug("Übersetzung fehlgeschlagen: %s", e)
-        return None if target == "de" else text
+        log.warning("Übersetzung fehlgeschlagen: %s", e)
+        if target == "de":
+            if os.environ.get("LIBRETRANSLATE_URL"):
+                out = _translate_text_libretranslate_local(text, target_lang)
+                if out:
+                    return out
+            out = _translate_text_simplytranslate(text, target_lang)
+            return out if out else None
+        return text
 
 
 @app.get("/api/translate")
@@ -1003,3 +1351,199 @@ def get_translate(
     if translated is None or (target == "de" and not translated.strip()):
         return {"translated": ""}
     return {"translated": translated or text}
+
+
+# ---------- AI-Standardfragen (News-Dropdown, konfigurierbar) ----------
+@app.get("/api/ai-questions")
+def get_ai_questions(lang: str = Query(None, description="Sprache (de/en) für Dropdown; fehlt = alle für Konfiguration")):
+    """Fragen in einer Sprache (für News-Dropdown) oder alle mit text_de/text_en (für Konfiguration)."""
+    import persist
+    if lang and str(lang).strip():
+        lang_clean = (lang or "de").strip().lower()[:2]
+        questions = persist.get_ai_preset_questions(lang_clean)
+        return {"questions": questions}
+    questions = persist.get_ai_preset_questions_all()
+    return {"questions": questions}
+
+
+@app.put("/api/ai-questions")
+def put_ai_questions(questions: list = Body(..., description="Liste { key, text_de, text_en, sort_order? }")):
+    """AI-Standardfragen speichern. Fehlende Sprachversion wird automatisch übersetzt."""
+    import persist
+    if not isinstance(questions, list):
+        raise HTTPException(status_code=400, detail="questions muss eine Liste sein")
+    enriched = []
+    for q in questions:
+        item = dict(q) if isinstance(q, dict) else {}
+        text_de = (item.get("text_de") or "").strip()
+        text_en = (item.get("text_en") or "").strip()
+        if text_de and not text_en:
+            translated = _translate_text(text_de, "en")
+            # Nur echte Übersetzung übernehmen, sonst Feld leer lassen (nicht Quelltext)
+            if translated and (translated.strip() != text_de):
+                item["text_en"] = translated.strip()
+                log.debug("AI-Frage übersetzt (de→en): %s…", text_de[:50])
+            else:
+                item["text_en"] = ""
+        elif text_en and not text_de:
+            translated = _translate_text(text_en, "de")
+            if translated and (translated.strip() != text_en):
+                item["text_de"] = translated.strip()
+                log.debug("AI-Frage übersetzt (en→de): %s…", text_en[:50])
+            else:
+                item["text_de"] = ""
+        enriched.append(item)
+    ok = persist.save_ai_preset_questions(enriched)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Speichern fehlgeschlagen")
+    return {"ok": True}
+
+
+# ---------- Admin: SQLite-Tabellen einsehen und bearbeiten ----------
+def _admin_get_conn():
+    import persist
+    if not persist.DB_PATH.exists():
+        return None
+    persist.init_db()
+    persist.init_news_db()
+    return persist._get_conn()
+
+
+def _admin_allowed_table(conn, name: str) -> bool:
+    if not name or not isinstance(name, str):
+        return False
+    name = name.strip()
+    if not name.replace("_", "").isalnum():
+        return False
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? AND name NOT LIKE 'sqlite_%'",
+        (name,),
+    ).fetchone()
+    return row is not None
+
+
+@app.get("/api/admin/tables")
+def admin_list_tables():
+    """Liste aller SQLite-Tabellen (außer sqlite_*)."""
+    conn = _admin_get_conn()
+    if not conn:
+        return {"tables": [], "error": "Datenbank nicht gefunden"}
+    try:
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall()
+        return {"tables": [r[0] for r in rows]}
+    except Exception as e:
+        log.warning("Admin tables: %s", e)
+        return {"tables": [], "error": str(e)}
+    finally:
+        conn.close()
+
+
+@app.get("/api/admin/table/{table_name}")
+def admin_get_table(
+    table_name: str,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    """Inhalt einer Tabelle mit Spaltennamen. rowid wird mitgeliefert."""
+    conn = _admin_get_conn()
+    if not conn:
+        raise HTTPException(status_code=404, detail="Datenbank nicht gefunden")
+    try:
+        if not _admin_allowed_table(conn, table_name):
+            raise HTTPException(status_code=400, detail="Tabelle nicht erlaubt")
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(f'SELECT rowid, * FROM "{table_name}" LIMIT ? OFFSET ?', (limit, offset))
+        rows = cur.fetchall()
+        columns = ["rowid"] + [d[0] for d in cur.description[1:]]
+        total = conn.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
+        data = [dict(zip(columns, row)) for row in rows]
+        for row in data:
+            for k, v in row.items():
+                if v is not None and isinstance(v, (bytes, bytearray)):
+                    row[k] = v.decode("utf-8", errors="replace")
+        return {"columns": columns, "rows": data, "total": total}
+    except sqlite3.OperationalError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+
+
+@app.put("/api/admin/table/{table_name}/row")
+def admin_update_row(table_name: str, row: dict = Body(...)):
+    """Eine Zeile per rowid aktualisieren. Body: { \"rowid\": 1, \"col1\": \"val1\", ... }."""
+    conn = _admin_get_conn()
+    if not conn:
+        raise HTTPException(status_code=404, detail="Datenbank nicht gefunden")
+    try:
+        if not _admin_allowed_table(conn, table_name):
+            raise HTTPException(status_code=400, detail="Tabelle nicht erlaubt")
+        rowid = row.get("rowid")
+        if rowid is None:
+            raise HTTPException(status_code=400, detail="rowid fehlt")
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(f'SELECT * FROM "{table_name}" WHERE rowid = ?', (rowid,))
+        existing = cur.fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Zeile nicht gefunden")
+        cols = [d[0] for d in cur.description]
+        updates = {}
+        for k, v in row.items():
+            if k == "rowid":
+                continue
+            if k in cols:
+                updates[k] = v
+        if not updates:
+            return {"ok": True, "message": "Keine Änderungen"}
+        set_clause = ", ".join(f'"{c}" = ?' for c in updates.keys())
+        conn.execute(
+            f'UPDATE "{table_name}" SET {set_clause} WHERE rowid = ?',
+            (*updates.values(), rowid),
+        )
+        conn.commit()
+        return {"ok": True}
+    except sqlite3.OperationalError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+
+
+@app.delete("/api/admin/table/{table_name}/row/{rowid:int}")
+def admin_delete_row(table_name: str, rowid: int):
+    """Eine Zeile anhand von rowid löschen."""
+    conn = _admin_get_conn()
+    if not conn:
+        raise HTTPException(status_code=404, detail="Datenbank nicht gefunden")
+    try:
+        if not _admin_allowed_table(conn, table_name):
+            raise HTTPException(status_code=400, detail="Tabelle nicht erlaubt")
+        cur = conn.execute(f'DELETE FROM "{table_name}" WHERE rowid = ?', (rowid,))
+        conn.commit()
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Zeile nicht gefunden")
+        return {"ok": True}
+    except sqlite3.OperationalError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+
+
+@app.delete("/api/admin/table/{table_name}/clear")
+def admin_clear_table(table_name: str):
+    """Alle Zeilen einer Tabelle löschen (Tabelle leeren)."""
+    conn = _admin_get_conn()
+    if not conn:
+        raise HTTPException(status_code=404, detail="Datenbank nicht gefunden")
+    try:
+        if not _admin_allowed_table(conn, table_name):
+            raise HTTPException(status_code=400, detail="Tabelle nicht erlaubt")
+        cur = conn.execute(f'DELETE FROM "{table_name}"')
+        conn.commit()
+        deleted = cur.rowcount
+        log.info("Admin: Tabelle %s geleert (%d Zeilen gelöscht)", table_name, deleted)
+        return {"ok": True, "deleted": deleted}
+    except sqlite3.OperationalError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
