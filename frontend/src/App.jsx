@@ -149,6 +149,15 @@ export default function App() {
   const [finanzenAiResponseByKey, setFinanzenAiResponseByKey] = useState({})
   const finanzenChartDropdownRef = useRef(null)
   const finanzenChartContainerRef = useRef(null)
+  const [kurseChartClickPayload, setKurseChartClickPayload] = useState(null)
+  const [kurseChartClickPosition, setKurseChartClickPosition] = useState(null)
+  const [kurseStickyPayload, setKurseStickyPayload] = useState(null)
+  const [kurseChartMouseY, setKurseChartMouseY] = useState(null)
+  const [kurseChartBounds, setKurseChartBounds] = useState(null)
+  const [kurseAiLoadingKey, setKurseAiLoadingKey] = useState(null)
+  const [kurseAiResponseByKey, setKurseAiResponseByKey] = useState({})
+  const kurseChartDropdownRef = useRef(null)
+  const kurseChartContainerRef = useRef(null)
   const [aiPresetQuestions, setAiPresetQuestions] = useState([])
   const [aiQuestionsConfig, setAiQuestionsConfig] = useState([])
   const [aiQuestionsConfigLoading, setAiQuestionsConfigLoading] = useState(false)
@@ -187,6 +196,30 @@ export default function App() {
     }
   }, [finanzenChartClickPayload])
 
+  useEffect(() => {
+    if (!kurseChartClickPayload) return
+    const close = (e) => {
+      if (kurseChartDropdownRef.current && !kurseChartDropdownRef.current.contains(e.target) && !e.target.closest('.recharts-wrapper') && !e.target.closest('[data-kurse-open]')) {
+        setKurseChartClickPayload(null)
+        setKurseChartClickPosition(null)
+        setKurseStickyPayload(null)
+      }
+    }
+    const closeContext = (e) => {
+      if (kurseChartDropdownRef.current && !kurseChartDropdownRef.current.contains(e.target) && !e.target.closest('.recharts-wrapper')) {
+        setKurseChartClickPayload(null)
+        setKurseChartClickPosition(null)
+        setKurseStickyPayload(null)
+      }
+    }
+    document.addEventListener('click', close)
+    document.addEventListener('contextmenu', closeContext)
+    return () => {
+      document.removeEventListener('click', close)
+      document.removeEventListener('contextmenu', closeContext)
+    }
+  }, [kurseChartClickPayload])
+
   const loadLmStudioModels = useCallback(async () => {
     setNewsAiModelsLoading(true)
     setNewsAiModels([])
@@ -205,7 +238,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (view === 'konfiguration' || view === 'news' || view === 'finanzen') loadLmStudioModels()
+    if (view === 'konfiguration' || view === 'news' || view === 'finanzen' || view === 'kurse') loadLmStudioModels()
   }, [view, loadLmStudioModels])
 
   const loadAiPresetQuestions = useCallback(async (lang) => {
@@ -255,7 +288,7 @@ export default function App() {
   }, [aiQuestionsConfig, loadAiQuestionsConfig, loadAiPresetQuestions, i18n.language])
 
   useEffect(() => {
-    if (view === 'news' || view === 'finanzen') loadAiPresetQuestions(i18n.language)
+    if (view === 'news' || view === 'finanzen' || view === 'kurse') loadAiPresetQuestions(i18n.language)
   }, [view, i18n.language, loadAiPresetQuestions])
 
   useEffect(() => {
@@ -491,6 +524,30 @@ export default function App() {
       setFinanzenAiResponseByKey((prev) => ({ ...prev, [q]: { question: q, error: e.message } }))
     } finally {
       setFinanzenAiLoadingKey(null)
+    }
+  }, [newsAiSelectedModel, newsAiModels, i18n.language])
+
+  const askAiForKurse = useCallback(async (questionText, title, summary) => {
+    const q = (questionText || '').trim()
+    if (!q) return
+    setKurseAiLoadingKey(q)
+    setKurseAiResponseByKey((prev) => ({ ...prev, [q]: null }))
+    try {
+      const effectiveModel = newsAiSelectedModel || (newsAiModels.length ? newsAiModels[0]?.id : '')
+      const lang = (i18n.language || 'de').startsWith('en') ? 'en' : 'de'
+      const body = { question: q, title: title || '', summary: summary || '', url: '', time_published: '', force_refresh: false, lang }
+      if (effectiveModel) body.model = effectiveModel
+      const res = await fetch(`${API}/ai/ask`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setKurseAiResponseByKey((prev) => ({ ...prev, [q]: { question: q, error: data.detail || res.statusText } }))
+        return
+      }
+      setKurseAiResponseByKey((prev) => ({ ...prev, [q]: { question: q, answer: data.answer || '', from_cache: !!data.from_cache, model: data.model || '' } }))
+    } catch (e) {
+      setKurseAiResponseByKey((prev) => ({ ...prev, [q]: { question: q, error: e.message } }))
+    } finally {
+      setKurseAiLoadingKey(null)
     }
   }, [newsAiSelectedModel, newsAiModels, i18n.language])
 
@@ -1076,6 +1133,113 @@ export default function App() {
   const kurseHi = Math.max(kurseStartI, kurseEndI)
   const slicedKurseChartData = nKurse > 0 ? kurseChartData.slice(kurseLo, kurseHi + 1) : []
 
+  const kurseDataForDomains = kurseChartData
+  const kurseLeftDomain = hasKurseData && kurseDataForDomains.length > 0
+    ? (() => {
+        const vals = kurseDataForDomains.flatMap((d) => [d.sp500, d.djia, d.nasdaq, d.dax].filter((v) => v != null))
+        return vals.length ? [Math.min(...vals), Math.max(...vals)] : [0, 1]
+      })()
+    : [0, 1]
+  const kurseRightDomain = hasKurseData && kurseDataForDomains.length > 0
+    ? (() => {
+        const vals = kurseDataForDomains.flatMap((d) => [d.btc, d.eth, d.ltc].filter((v) => v != null))
+        return vals.length ? [Math.min(...vals), Math.max(...vals)] : [0, 1]
+      })()
+    : [0, 1]
+
+  const kurseSeriesConfig = [
+    { key: 'sp500', label: labelSP500, unit: t('kurse.axisIndices'), axis: 'left' },
+    { key: 'djia', label: labelDJIA, unit: t('kurse.axisIndices'), axis: 'left' },
+    { key: 'nasdaq', label: labelNASDAQ, unit: t('kurse.axisIndices'), axis: 'left' },
+    { key: 'dax', label: labelDAX, unit: t('kurse.axisIndices'), axis: 'left' },
+    { key: 'btc', label: labelBTC, unit: 'USD', axis: 'right' },
+    { key: 'eth', label: labelETH, unit: 'USD', axis: 'right' },
+    { key: 'ltc', label: labelLTC, unit: 'USD', axis: 'right' },
+  ]
+
+  const kursePlaceholdersList = (() => {
+    const p = kurseChartClickPayload
+    if (!p) return []
+    const d = formatDate(p.date)
+    const series = kurseSeriesConfig.filter(({ key }) => p[key] != null && p[key] !== '')
+    if (series.length === 0) return []
+    if (kurseChartMouseY != null && kurseChartBounds) {
+      const { top, bottom } = kurseChartBounds
+      const chartTop = top + 5
+      const chartBottom = bottom - 5
+      const h = chartBottom - chartTop
+      if (h > 0) {
+        const t = (kurseChartMouseY - chartTop) / h
+        const leftVal = kurseLeftDomain[1] - t * (kurseLeftDomain[1] - kurseLeftDomain[0])
+        const rightVal = kurseRightDomain[1] - t * (kurseRightDomain[1] - kurseRightDomain[0])
+        const leftRange = kurseLeftDomain[1] - kurseLeftDomain[0] || 1
+        const rightRange = kurseRightDomain[1] - kurseRightDomain[0] || 1
+        let best = series[0]
+        let bestDist = Infinity
+        for (const s of series) {
+          const val = p[s.key]
+          const range = s.axis === 'left' ? leftRange : rightRange
+          const mouseVal = s.axis === 'left' ? leftVal : rightVal
+          const dist = Math.abs(Number(val) - mouseVal) / range
+          if (dist < bestDist) {
+            bestDist = dist
+            best = s
+          }
+        }
+        const val = p[best.key]
+        const vStr = typeof val === 'number' ? val.toLocaleString(locale, { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : String(val)
+        return [{ d, c: best.label, v: `${vStr} ${best.unit}`.trim() }]
+      }
+    }
+    const first = series[0]
+    const val = p[first.key]
+    const vStr = typeof val === 'number' ? val.toLocaleString(locale, { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : String(val)
+    return [{ d, c: first.label, v: `${vStr} ${first.unit}`.trim() }]
+  })()
+
+  const kurseEffectivePayload = kurseStickyPayload ? kurseStickyPayload.payload : kurseChartClickPayload
+  const kurseEffectivePlaceholdersList = kurseStickyPayload && kurseStickyPayload.payload
+    ? (() => {
+        const p = kurseStickyPayload.payload
+        const { mouseY, bounds } = kurseStickyPayload
+        const d = formatDate(p.date)
+        const series = kurseSeriesConfig.filter(({ key }) => p[key] != null && p[key] !== '')
+        if (series.length === 0) return []
+        if (mouseY != null && bounds) {
+          const { top, bottom } = bounds
+          const chartTop = top + 5
+          const chartBottom = bottom - 5
+          const h = chartBottom - chartTop
+          if (h > 0) {
+            const t = (mouseY - chartTop) / h
+            const leftVal = kurseLeftDomain[1] - t * (kurseLeftDomain[1] - kurseLeftDomain[0])
+            const rightVal = kurseRightDomain[1] - t * (kurseRightDomain[1] - kurseRightDomain[0])
+            const leftRange = kurseLeftDomain[1] - kurseLeftDomain[0] || 1
+            const rightRange = kurseRightDomain[1] - kurseRightDomain[0] || 1
+            let best = series[0]
+            let bestDist = Infinity
+            for (const s of series) {
+              const val = p[s.key]
+              const range = s.axis === 'left' ? leftRange : rightRange
+              const mouseVal = s.axis === 'left' ? leftVal : rightVal
+              const dist = Math.abs(Number(val) - mouseVal) / range
+              if (dist < bestDist) {
+                bestDist = dist
+                best = s
+              }
+            }
+            const val = p[best.key]
+            const vStr = typeof val === 'number' ? val.toLocaleString(locale, { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : String(val)
+            return [{ d, c: best.label, v: `${vStr} ${best.unit}`.trim() }]
+          }
+        }
+        const first = series[0]
+        const val = p[first.key]
+        const vStr = typeof val === 'number' ? val.toLocaleString(locale, { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : String(val)
+        return [{ d, c: first.label, v: `${vStr} ${first.unit}`.trim() }]
+      })()
+    : kursePlaceholdersList
+
   const n = chartData.length
   const [rangeStart, setRangeStart] = useState(0)
   const [rangeEnd, setRangeEnd] = useState(0)
@@ -1313,29 +1477,66 @@ export default function App() {
                   <span>{labelLTC}</span>
                 </label>
               </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  data-kurse-open
+                  onClick={() => {
+                    setKurseChartMouseY(null)
+                    setKurseStickyPayload(null)
+                    const data = slicedKurseChartData.length > 0 ? slicedKurseChartData : kurseChartData
+                    setKurseChartClickPayload(data.length > 0 ? data[0] : null)
+                    setKurseChartClickPosition(null)
+                  }}
+                  style={{ padding: '0.35rem 0.6rem', fontSize: '0.9rem', background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: 6, cursor: 'pointer' }}
+                >
+                  {t('chart.showAiQuestions')}
+                </button>
+                <span style={{ fontSize: '0.8rem', color: '#64748b' }}>{t('chart.clickPointHint')}</span>
+              </div>
               {kurseChartData.length > 0 && hasKurseData ? (
                 <>
-                  <ResponsiveContainer width="100%" height={360}>
-                    <LineChart data={slicedKurseChartData.length > 0 ? slicedKurseChartData : kurseChartData} margin={{ top: 5, right: 50, left: 10, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-                      <XAxis dataKey="date" tick={{ fontSize: 12 }} tickFormatter={(v) => formatDate(v)} />
-                      <YAxis
-                        yAxisId="left"
-                        tick={{ fontSize: 12 }}
-                        tickFormatter={(v) => v.toLocaleString(locale, { maximumFractionDigits: 0 })}
-                        label={{ value: t('kurse.axisIndices'), angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fontSize: 12 } }}
-                      />
-                      <YAxis
-                        yAxisId="right"
-                        orientation="right"
-                        tick={{ fontSize: 12 }}
-                        tickFormatter={(v) => v.toLocaleString(locale, { maximumFractionDigits: 0 })}
-                        label={{ value: 'Krypto (USD)', angle: 90, position: 'insideRight', style: { textAnchor: 'middle', fontSize: 12 } }}
-                      />
-                      <Tooltip
-                        formatter={(value, name) => [value != null ? Number(value).toLocaleString(locale, { maximumFractionDigits: 2 }) : '–', name ?? t('chart.tooltipValue')]}
-                        labelFormatter={(label) => `${t('chart.tooltipDate')}: ${formatDate(label)}`}
-                      />
+                  <div
+                    ref={kurseChartContainerRef}
+                    onMouseMove={(e) => {
+                      setKurseChartMouseY(e.clientY)
+                      setKurseChartBounds(kurseChartContainerRef.current?.getBoundingClientRect() ?? null)
+                    }}
+                    onMouseLeave={() => setKurseChartMouseY(null)}
+                    onContextMenu={(e) => {
+                      if (kurseChartClickPayload && kurseChartContainerRef.current?.contains(e.target)) {
+                        e.preventDefault()
+                        setKurseStickyPayload({
+                          payload: kurseChartClickPayload,
+                          mouseY: kurseChartMouseY,
+                          bounds: kurseChartBounds,
+                        })
+                      }
+                    }}
+                    style={{ width: '100%' }}
+                  >
+                    <ResponsiveContainer width="100%" height={360}>
+                      <LineChart data={slicedKurseChartData.length > 0 ? slicedKurseChartData : kurseChartData} margin={{ top: 5, right: 50, left: 10, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                        <XAxis dataKey="date" tick={{ fontSize: 12 }} tickFormatter={(v) => formatDate(v)} />
+                        <YAxis
+                          yAxisId="left"
+                          tick={{ fontSize: 12 }}
+                          tickFormatter={(v) => v.toLocaleString(locale, { maximumFractionDigits: 0 })}
+                          label={{ value: t('kurse.axisIndices'), angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fontSize: 12 } }}
+                        />
+                        <YAxis
+                          yAxisId="right"
+                          orientation="right"
+                          tick={{ fontSize: 12 }}
+                          tickFormatter={(v) => v.toLocaleString(locale, { maximumFractionDigits: 0 })}
+                          label={{ value: 'Krypto (USD)', angle: 90, position: 'insideRight', style: { textAnchor: 'middle', fontSize: 12 } }}
+                        />
+                        <Tooltip
+                          content={(props) => <FinanzenTooltipContent {...props} onPointHover={(p) => setKurseChartClickPayload(p)} formatDate={formatDate} t={t} locale={locale} />}
+                          formatter={(value, name) => [value != null ? Number(value).toLocaleString(locale, { maximumFractionDigits: 2 }) : '–', name ?? t('chart.tooltipValue')]}
+                          labelFormatter={(label) => `${t('chart.tooltipDate')}: ${formatDate(label)}`}
+                        />
                       {visibleKurseSeries.sp500 && <Line type="monotone" dataKey="sp500" name={labelSP500} stroke="#2563eb" strokeWidth={2} dot={false} connectNulls yAxisId="left" />}
                       {visibleKurseSeries.djia && <Line type="monotone" dataKey="djia" name={labelDJIA} stroke="#059669" strokeWidth={2} dot={false} connectNulls yAxisId="left" />}
                       {visibleKurseSeries.nasdaq && <Line type="monotone" dataKey="nasdaq" name={labelNASDAQ} stroke="#dc2626" strokeWidth={2} dot={false} connectNulls yAxisId="left" />}
@@ -1345,6 +1546,7 @@ export default function App() {
                       {visibleKurseSeries.ltc && <Line type="monotone" dataKey="ltc" name={labelLTC} stroke="#14b8a6" strokeWidth={2} dot={false} connectNulls yAxisId="right" />}
                     </LineChart>
                   </ResponsiveContainer>
+                </div>
                   {nKurse > 1 && (
                     <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid #eee' }}>
                       <div style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.5rem' }}>{t('chart.period')}</div>
@@ -1389,6 +1591,42 @@ export default function App() {
                           {t('chart.fullRange')}
                         </button>
                       </div>
+                    </div>
+                  )}
+                  {(kurseEffectivePayload || kurseChartClickPayload) && (
+                    <div ref={kurseChartDropdownRef} style={{ marginTop: '1rem', padding: '0.75rem 1rem', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+                      <div style={{ fontSize: '0.9rem', fontWeight: 600, color: '#334155', marginBottom: '0.5rem' }}>
+                        {kurseEffectivePayload ? formatDate(kurseEffectivePayload.date) : ''} – {t('chart.aiQuestionsBelow')}
+                      </div>
+                      <ul style={{ margin: 0, paddingLeft: '0.5rem', listStyle: 'none', fontSize: '0.9rem', color: '#475569' }}>
+                        {(kurseEffectivePlaceholdersList.length === 0 ? [{ d: formatDate(kurseEffectivePayload?.date), c: '–', v: '–' }] : kurseEffectivePlaceholdersList).map((ph) =>
+                          (aiPresetQuestions.filter((q) => (q.key || '').includes('XK'))).map((q) => {
+                            const text = (q.text || '').replace(/%d/g, ph.d).replace(/%c/g, ph.c).replace(/%v/g, ph.v)
+                            const summary = `${ph.c}: ${ph.v}`
+                            const title = kurseEffectivePayload ? formatDate(kurseEffectivePayload.date) : ''
+                            const isLoading = kurseAiLoadingKey === text
+                            const res = kurseAiResponseByKey[text]
+                            return (
+                              <li key={`${q.key}-${ph.c}`} style={{ marginBottom: '0.5rem' }}>
+                                <button
+                                  type="button"
+                                  disabled={isLoading}
+                                  onClick={() => askAiForKurse(text, title, summary)}
+                                  style={{ width: '100%', padding: '0.4rem 0.5rem', textAlign: 'left', background: isLoading ? '#f1f5f9' : '#fff', border: '1px solid #e2e8f0', borderRadius: 6, cursor: isLoading ? 'wait' : 'pointer', fontSize: '0.9rem', color: '#334155' }}
+                                >
+                                  {text}
+                                </button>
+                                {res && !kurseAiLoadingKey && (
+                                  <div style={{ marginTop: '0.35rem', padding: '0.4rem 0.5rem', background: res.error ? '#fef2f2' : '#f0f9ff', borderLeft: `3px solid ${res.error ? '#dc2626' : '#0ea5e9'}`, borderRadius: 4, fontSize: '0.85rem', color: '#475569', whiteSpace: 'pre-wrap' }}>
+                                    {res.error ? res.error : res.answer}
+                                    {res.model && !res.error && <div style={{ marginTop: '0.25rem', fontSize: '0.75rem', color: '#64748b' }}>{t('news.aiFromCache')} {res.model}</div>}
+                                  </div>
+                                )}
+                              </li>
+                            )
+                          })
+                        ).flat()}
+                      </ul>
                     </div>
                   )}
                 </>
