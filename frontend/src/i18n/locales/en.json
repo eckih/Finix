@@ -48,7 +48,8 @@
     "totalTokens": "Total tokens",
     "aiPresetQuestionsTitle": "AI preset questions (News dropdown)",
     "aiPresetQuestionsHint": "These questions appear in the AI dropdown for each news item. Provide text in German and English; display uses the selected language.",
-    "aiQuestionKey": "Key",
+    "aiQuestionKey": "Short name (ID)",
+    "aiQuestionKeyHint": "Unique short identifier for the question (e.g. stocks, btc). Used internally; users see the German/English text.",
     "aiPresetQuestionsAdd": "Add question",
     "aiQuestionSortOrder": "Sort order"
   },
@@ -135,7 +136,13 @@
     "fullRange": "Full range",
     "noData": "No history data yet. Click \"Fetch & save now\".",
     "tooltipValue": "Value",
-    "tooltipDate": "Date"
+    "tooltipDate": "Date",
+    "pointSelected": "Point",
+    "close": "Close",
+    "aiQuestionsHint": "Questions for the AI (query not implemented yet):",
+    "showAiQuestions": "Show AI questions",
+    "clickPointHint": "Or hover a point – AI questions appear below.",
+    "aiQuestionsBelow": "AI questions are shown below."
   },
   "table": {
     "lastEntries": "Latest entries",

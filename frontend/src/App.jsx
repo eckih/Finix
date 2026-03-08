@@ -14,6 +14,22 @@ import {
 const API = '/api'
 const GITHUB_REPO = 'eckih/Finix'
 
+function FinanzenTooltipContent({ active, payload, label, onPointHover, formatDate, t, locale }) {
+  useEffect(() => {
+    if (active && payload && payload.length > 0) onPointHover(payload[0].payload)
+  }, [active, payload, onPointHover])
+  if (!active || !payload || payload.length === 0) return null
+  return (
+    <div style={{ padding: '0.5rem 0.75rem', background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8, boxShadow: '0 2px 8px rgba(0,0,0,0.1)', fontSize: '0.9rem' }}>
+      <div style={{ marginBottom: '0.35rem', fontWeight: 600, color: '#334155' }}>{t('chart.tooltipDate')}: {formatDate(label)}</div>
+      {payload.map((p) => (
+        <div key={p.dataKey} style={{ color: '#475569' }}>{p.name}: {p.value != null ? Number(p.value).toLocaleString(locale, { maximumFractionDigits: 2 }) : '–'}</div>
+      ))}
+      <div style={{ marginTop: '0.4rem', fontSize: '0.8rem', color: '#0369a1' }}>{t('chart.aiQuestionsBelow')}</div>
+    </div>
+  )
+}
+
 // Versionsvergleich: "1.0.0" / "v1.0.1" → [1,0,0]; gibt true zurück wenn latest > current
 function parseVersion(s) {
   if (!s || typeof s !== 'string') return [0, 0, 0]
@@ -124,6 +140,14 @@ export default function App() {
   const [adminOffset, setAdminOffset] = useState(0)
   const [adminSortBy, setAdminSortBy] = useState('')
   const [adminSortOrder, setAdminSortOrder] = useState('asc')
+  const [finanzenChartClickPayload, setFinanzenChartClickPayload] = useState(null)
+  const [finanzenChartClickPosition, setFinanzenChartClickPosition] = useState(null)
+  const [finanzenChartMouseY, setFinanzenChartMouseY] = useState(null)
+  const [finanzenChartBounds, setFinanzenChartBounds] = useState(null)
+  const [finanzenAiLoadingKey, setFinanzenAiLoadingKey] = useState(null)
+  const [finanzenAiResponseByKey, setFinanzenAiResponseByKey] = useState({})
+  const finanzenChartDropdownRef = useRef(null)
+  const finanzenChartContainerRef = useRef(null)
   const [aiPresetQuestions, setAiPresetQuestions] = useState([])
   const [aiQuestionsConfig, setAiQuestionsConfig] = useState([])
   const [aiQuestionsConfigLoading, setAiQuestionsConfigLoading] = useState(false)
@@ -137,6 +161,28 @@ export default function App() {
     document.addEventListener('click', close)
     return () => document.removeEventListener('click', close)
   }, [newsAiOpenIndex])
+
+  useEffect(() => {
+    if (!finanzenChartClickPayload) return
+    const close = (e) => {
+      if (finanzenChartDropdownRef.current && !finanzenChartDropdownRef.current.contains(e.target) && !e.target.closest('.recharts-wrapper') && !e.target.closest('[data-finanzen-open]')) {
+        setFinanzenChartClickPayload(null)
+        setFinanzenChartClickPosition(null)
+      }
+    }
+    const closeContext = (e) => {
+      if (finanzenChartDropdownRef.current && !finanzenChartDropdownRef.current.contains(e.target) && !e.target.closest('.recharts-wrapper')) {
+        setFinanzenChartClickPayload(null)
+        setFinanzenChartClickPosition(null)
+      }
+    }
+    document.addEventListener('click', close)
+    document.addEventListener('contextmenu', closeContext)
+    return () => {
+      document.removeEventListener('click', close)
+      document.removeEventListener('contextmenu', closeContext)
+    }
+  }, [finanzenChartClickPayload])
 
   const loadLmStudioModels = useCallback(async () => {
     setNewsAiModelsLoading(true)
@@ -156,7 +202,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (view === 'konfiguration') loadLmStudioModels()
+    if (view === 'konfiguration' || view === 'news' || view === 'finanzen') loadLmStudioModels()
   }, [view, loadLmStudioModels])
 
   const loadAiPresetQuestions = useCallback(async (lang) => {
@@ -206,7 +252,7 @@ export default function App() {
   }, [aiQuestionsConfig, loadAiQuestionsConfig, loadAiPresetQuestions, i18n.language])
 
   useEffect(() => {
-    if (view === 'news') loadAiPresetQuestions(i18n.language)
+    if (view === 'news' || view === 'finanzen') loadAiPresetQuestions(i18n.language)
   }, [view, i18n.language, loadAiPresetQuestions])
 
   useEffect(() => {
@@ -418,6 +464,30 @@ export default function App() {
       setNewsAiResponseByIndex((prev) => ({ ...prev, [index]: { question: (question || '').trim(), error: e.message } }))
     } finally {
       setNewsAiLoadingIndex(null)
+    }
+  }, [newsAiSelectedModel, newsAiModels, i18n.language])
+
+  const askAiForFinanzen = useCallback(async (questionText, title, summary) => {
+    const q = (questionText || '').trim()
+    if (!q) return
+    setFinanzenAiLoadingKey(q)
+    setFinanzenAiResponseByKey((prev) => ({ ...prev, [q]: null }))
+    try {
+      const effectiveModel = newsAiSelectedModel || (newsAiModels.length ? newsAiModels[0]?.id : '')
+      const lang = (i18n.language || 'de').startsWith('en') ? 'en' : 'de'
+      const body = { question: q, title: title || '', summary: summary || '', url: '', time_published: '', force_refresh: false, lang }
+      if (effectiveModel) body.model = effectiveModel
+      const res = await fetch(`${API}/ai/ask`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setFinanzenAiResponseByKey((prev) => ({ ...prev, [q]: { question: q, error: data.detail || res.statusText } }))
+        return
+      }
+      setFinanzenAiResponseByKey((prev) => ({ ...prev, [q]: { question: q, answer: data.answer || '', from_cache: !!data.from_cache, model: data.model || '' } }))
+    } catch (e) {
+      setFinanzenAiResponseByKey((prev) => ({ ...prev, [q]: { question: q, error: e.message } }))
+    } finally {
+      setFinanzenAiLoadingKey(null)
     }
   }, [newsAiSelectedModel, newsAiModels, i18n.language])
 
@@ -825,6 +895,72 @@ export default function App() {
 
   const hasMultiSeries = isUS && chartData.length > 0 && chartData.some((d) => d.tga != null || d.wdtgal != null || d.rrp != null || d.wresbal != null || d.sofr != null || d.effr != null)
   const yAxisUnit = isUS ? formatUnit('Mrd. USD') : formatUnit(history[0]?.unit) || history[0]?.unit || ''
+
+  const dataForDomains = chartData
+  const leftDomain = hasMultiSeries && dataForDomains.length > 0
+    ? (() => {
+        const vals = dataForDomains.flatMap((d) => [d.tga, d.wdtgal, d.rrp, d.wresbal].filter((v) => v != null))
+        return vals.length ? [Math.min(...vals), Math.max(...vals)] : [0, 1]
+      })()
+    : [0, 1]
+  const rightDomain = hasMultiSeries && dataForDomains.length > 0
+    ? (() => {
+        const vals = dataForDomains.flatMap((d) => [d.sofr, d.effr].filter((v) => v != null))
+        return vals.length ? [Math.min(...vals), Math.max(...vals)] : [0, 1]
+      })()
+    : [0, 1]
+
+  const finanzenPlaceholdersList = (() => {
+    const p = finanzenChartClickPayload
+    if (!p) return []
+    const d = formatDate(p.date)
+    if (hasMultiSeries) {
+      const series = [
+        { key: 'tga', label: labelTGA, unit: yAxisUnit, axis: 'left' },
+        { key: 'wdtgal', label: labelWDTGAL, unit: yAxisUnit, axis: 'left' },
+        { key: 'rrp', label: labelRRP, unit: yAxisUnit, axis: 'left' },
+        { key: 'wresbal', label: labelWRESBAL, unit: yAxisUnit, axis: 'left' },
+        { key: 'sofr', label: labelSOFR, unit: '%', axis: 'right' },
+        { key: 'effr', label: labelEFFR, unit: '%', axis: 'right' },
+      ].filter(({ key }) => p[key] != null && p[key] !== '')
+      if (series.length === 0) return []
+      if (finanzenChartMouseY != null && finanzenChartBounds) {
+        const { top, bottom } = finanzenChartBounds
+        const chartTop = top + 5
+        const chartBottom = bottom - 5
+        const h = chartBottom - chartTop
+        if (h > 0) {
+          const t = (finanzenChartMouseY - chartTop) / h
+          const leftVal = leftDomain[1] - t * (leftDomain[1] - leftDomain[0])
+          const rightVal = rightDomain[1] - t * (rightDomain[1] - rightDomain[0])
+          const leftRange = leftDomain[1] - leftDomain[0] || 1
+          const rightRange = rightDomain[1] - rightDomain[0] || 1
+          let best = series[0]
+          let bestDist = Infinity
+          for (const s of series) {
+            const val = p[s.key]
+            const range = s.axis === 'left' ? leftRange : rightRange
+            const mouseVal = s.axis === 'left' ? leftVal : rightVal
+            const dist = Math.abs(Number(val) - mouseVal) / range
+            if (dist < bestDist) {
+              bestDist = dist
+              best = s
+            }
+          }
+          const val = p[best.key]
+          const vStr = typeof val === 'number' ? val.toLocaleString(locale, { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : String(val)
+          return [{ d, c: best.label, v: `${vStr} ${best.unit}`.trim() }]
+        }
+      }
+      const first = series[0]
+      const val = p[first.key]
+      const vStr = typeof val === 'number' ? val.toLocaleString(locale, { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : String(val)
+      return [{ d, c: first.label, v: `${vStr} ${first.unit}`.trim() }]
+    }
+    const val = p.value != null ? Number(p.value).toLocaleString(locale, { maximumFractionDigits: 2 }) : '–'
+    const unit = yAxisUnit || ''
+    return [{ d, c: t('chart.tooltipValue'), v: `${val} ${unit}`.trim() }]
+  })()
 
   const [visibleSeries, setVisibleSeries] = useState({ tga: true, wdtgal: true, rrp: true, wresbal: true, sofr: true, effr: true })
   const [visibleKurseSeries, setVisibleKurseSeries] = useState({ sp500: true, djia: true, nasdaq: true, dax: true, btc: true, eth: true, ltc: true })
@@ -1471,9 +1607,10 @@ export default function App() {
                   <input
                     type="text"
                     placeholder={t('config.aiQuestionKey')}
+                    title={t('config.aiQuestionKeyHint')}
                     value={q.key}
                     onChange={(e) => setAiQuestionsConfig(prev => prev.map((r, i) => i === idx ? { ...r, key: e.target.value } : r))}
-                    style={{ width: 80, padding: '0.35rem 0.5rem', fontSize: '0.85rem', border: '1px solid #cbd5e1', borderRadius: 4 }}
+                    style={{ width: 100, padding: '0.35rem 0.5rem', fontSize: '0.85rem', border: '1px solid #cbd5e1', borderRadius: 4 }}
                   />
                   <input
                     type="text"
@@ -2052,6 +2189,30 @@ export default function App() {
             )}
             {chartData.length > 0 ? (
               <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    data-finanzen-open
+                    onClick={() => {
+                      setFinanzenChartMouseY(null)
+                      setFinanzenChartClickPayload((slicedChartData.length > 0 ? slicedChartData : chartData)[0] || null)
+                      setFinanzenChartClickPosition(null)
+                    }}
+                    style={{ padding: '0.35rem 0.6rem', fontSize: '0.85rem', background: '#e0f2fe', color: '#0369a1', border: '1px solid #7dd3fc', borderRadius: 6, cursor: 'pointer' }}
+                  >
+                    {t('chart.showAiQuestions')}
+                  </button>
+                  <span style={{ fontSize: '0.8rem', color: '#64748b' }}>{t('chart.clickPointHint')}</span>
+                </div>
+                <div
+                  ref={finanzenChartContainerRef}
+                  onMouseMove={(e) => {
+                    setFinanzenChartMouseY(e.clientY)
+                    setFinanzenChartBounds(finanzenChartContainerRef.current?.getBoundingClientRect() ?? null)
+                  }}
+                  onMouseLeave={() => setFinanzenChartMouseY(null)}
+                  style={{ width: '100%' }}
+                >
                 <ResponsiveContainer width="100%" height={320}>
                   <LineChart data={slicedChartData.length > 0 ? slicedChartData : chartData} margin={{ top: 5, right: 50, left: 10, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
@@ -2070,8 +2231,15 @@ export default function App() {
                       label={{ value: '%', angle: 90, position: 'insideRight', style: { textAnchor: 'middle', fontSize: 12 } }}
                     />
                     <Tooltip
-                      formatter={(value, name) => [value != null ? Number(value).toLocaleString(locale, { maximumFractionDigits: 2 }) : '–', name ?? t('chart.tooltipValue')]}
-                      labelFormatter={(label) => `${t('chart.tooltipDate')}: ${formatDate(label)}`}
+                      content={(props) => (
+                        <FinanzenTooltipContent
+                          {...props}
+                          onPointHover={(p) => { setFinanzenChartClickPayload(p); setFinanzenChartClickPosition(null) }}
+                          formatDate={formatDate}
+                          t={t}
+                          locale={locale}
+                        />
+                      )}
                     />
                     <Legend content={<LegendWithLinks />} />
                     {hasMultiSeries ? (
@@ -2088,6 +2256,73 @@ export default function App() {
                     )}
                   </LineChart>
                 </ResponsiveContainer>
+                </div>
+                {finanzenChartClickPayload && (
+                  <div
+                    ref={finanzenChartDropdownRef}
+                    data-finanzen-ai-dropdown
+                    style={{
+                      ...(finanzenChartClickPosition
+                        ? {
+                            position: 'fixed',
+                            left: Math.min(finanzenChartClickPosition.x, window.innerWidth - 320),
+                            top: Math.min(finanzenChartClickPosition.y, window.innerHeight - 280),
+                            zIndex: 9999,
+                          }
+                        : { marginTop: '1rem', position: 'relative', zIndex: 10 }),
+                      padding: '0.75rem 1rem',
+                      background: '#f8fafc',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: 8,
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+                      minWidth: 280,
+                      maxWidth: 360,
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                      <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#334155' }}>
+                        {t('chart.pointSelected')}: {formatDate(finanzenChartClickPayload.date)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => { setFinanzenChartClickPayload(null); setFinanzenChartClickPosition(null) }}
+                        style={{ padding: '0.2rem 0.5rem', fontSize: '0.85rem', background: '#e2e8f0', border: '1px solid #cbd5e1', borderRadius: 4, cursor: 'pointer' }}
+                      >
+                        {t('chart.close')}
+                      </button>
+                    </div>
+                    <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '0.5rem' }}>{t('chart.aiQuestionsHint')}</div>
+                    <ul style={{ margin: 0, paddingLeft: '0.5rem', listStyle: 'none', fontSize: '0.9rem', color: '#475569' }}>
+                      {(finanzenPlaceholdersList.length === 0 ? [{ d: formatDate(finanzenChartClickPayload?.date), c: '–', v: '–' }] : finanzenPlaceholdersList).map((ph) =>
+                        (aiPresetQuestions.length ? aiPresetQuestions : [{ key: 'stocks', text: t('news.aiQuestionStocks') }, { key: 'btc', text: t('news.aiQuestionBtc') }]).map((q) => {
+                          const text = (q.text || '').replace(/%d/g, ph.d).replace(/%c/g, ph.c).replace(/%v/g, ph.v)
+                          const summary = `${ph.c}: ${ph.v}`
+                          const title = finanzenChartClickPayload ? formatDate(finanzenChartClickPayload.date) : ''
+                          const isLoading = finanzenAiLoadingKey === text
+                          const res = finanzenAiResponseByKey[text]
+                          return (
+                            <li key={`${q.key}-${ph.c}`} style={{ marginBottom: '0.5rem' }}>
+                              <button
+                                type="button"
+                                disabled={isLoading}
+                                onClick={() => askAiForFinanzen(text, title, summary)}
+                                style={{ width: '100%', padding: '0.4rem 0.5rem', textAlign: 'left', background: isLoading ? '#f1f5f9' : '#fff', border: '1px solid #e2e8f0', borderRadius: 6, cursor: isLoading ? 'wait' : 'pointer', fontSize: '0.9rem', color: '#334155' }}
+                              >
+                                {text}
+                              </button>
+                              {res && !finanzenAiLoadingKey && (
+                                <div style={{ marginTop: '0.35rem', padding: '0.4rem 0.5rem', background: res.error ? '#fef2f2' : '#f0f9ff', borderLeft: `3px solid ${res.error ? '#dc2626' : '#0ea5e9'}`, borderRadius: 4, fontSize: '0.85rem', color: '#475569', whiteSpace: 'pre-wrap' }}>
+                                  {res.error ? res.error : res.answer}
+                                  {res.model && !res.error && <div style={{ marginTop: '0.25rem', fontSize: '0.75rem', color: '#64748b' }}>{t('news.aiFromCache')} {res.model}</div>}
+                                </div>
+                              )}
+                            </li>
+                          )
+                        })
+                      ).flat()}
+                    </ul>
+                  </div>
+                )}
                 {n > 1 && (
                   <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid #eee' }}>
                     <div style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.5rem' }}>{t('chart.period')}</div>

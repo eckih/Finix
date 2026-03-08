@@ -48,7 +48,8 @@
     "totalTokens": "Tokens gesamt",
     "aiPresetQuestionsTitle": "AI-Standardfragen (News-Dropdown)",
     "aiPresetQuestionsHint": "Diese Fragen erscheinen im AI-Dropdown bei jeder News. Texte auf Deutsch und Englisch; Anzeige in der gewählten Sprache.",
-    "aiQuestionKey": "Key",
+    "aiQuestionKey": "Kurzname (ID)",
+    "aiQuestionKeyHint": "Eindeutiger Kurzname für die Frage (z. B. stocks, btc). Wird intern verwendet; Nutzer sehen den deutschen/englischen Text.",
     "aiPresetQuestionsAdd": "Frage hinzufügen",
     "aiQuestionSortOrder": "Reihenfolge"
   },
@@ -135,7 +136,13 @@
     "fullRange": "Ganzer Zeitraum",
     "noData": "Noch keine Verlaufsdaten. Klicke auf „Jetzt abfragen & speichern“.",
     "tooltipValue": "Wert",
-    "tooltipDate": "Datum"
+    "tooltipDate": "Datum",
+    "pointSelected": "Punkt",
+    "close": "Schließen",
+    "aiQuestionsHint": "Fragen an die KI (Abfrage noch nicht implementiert):",
+    "showAiQuestions": "KI-Fragen anzeigen",
+    "clickPointHint": "Oder Punkt anfahren – KI-Fragen erscheinen unten.",
+    "aiQuestionsBelow": "KI-Fragen werden unten angezeigt."
   },
   "table": {
     "lastEntries": "Letzte Einträge",

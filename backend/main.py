@@ -842,23 +842,22 @@ async def post_ai_ask(body: AIAskBody):
     model_used = (body.model or "").strip()
     log.info("App: AI-Anfrage question=%s model=%s stream=%s", question[:80], model_used or "(default)", body.stream)
     if _is_gemini_model(body.model):
+        raw = (body.model or "").strip().lower()
+        model_used = raw if raw in GEMINI_MODELS else GEMINI_MODELS[0]
         answer, err = await asyncio.to_thread(
             _ask_gemini, body.question, body.title or "", body.summary or "", body.model
         )
         if err:
             raise HTTPException(status_code=502, detail=err)
         answer = answer or ""
-        if not model_used:
-            model_used = body.model or "gemini"
     elif _is_sonnet_model(body.model):
+        model_used = SONNET_MODEL_ID
         answer, err = await asyncio.to_thread(
             _ask_anthropic, body.question, body.title or "", body.summary or "", body.model
         )
         if err:
             raise HTTPException(status_code=502, detail=err)
         answer = answer or ""
-        if not model_used:
-            model_used = body.model or "claude-sonnet"
     elif body.stream:
         def gen():
             for line in _stream_lm_studio_ask(
@@ -874,14 +873,13 @@ async def post_ai_ask(body: AIAskBody):
             headers={"Cache-Control": "no-store"},
         )
     else:
+        model_used = (body.model or "").strip() or LM_STUDIO_MODEL or "lm-studio"
         answer, err = await asyncio.to_thread(
             _ask_lm_studio, body.question, body.title or "", body.summary or "", body.model
         )
         if err:
             raise HTTPException(status_code=502, detail=err)
         answer = answer or ""
-        if not model_used:
-            model_used = LM_STUDIO_MODEL or "lm-studio"
 
     if use_cache and news_key and question_key and answer:
         persist.save_ai_news_answer(news_key, question_key, question, answer, model_used or "", lang)
