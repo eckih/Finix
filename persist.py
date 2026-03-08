@@ -152,15 +152,22 @@ def get_ai_preset_questions_all() -> list:
 
 
 def save_ai_preset_questions(questions: list) -> bool:
-    """AI-Standardfragen speichern. questions: Liste von { key, text_de, text_en, sort_order? }. Bestehende werden ersetzt."""
+    """AI-Standardfragen speichern. questions: Liste von { key, text_de, text_en, sort_order? }. Bestehende werden ersetzt. Doppelte Keys werden durch _2, _3 usw. eindeutig gemacht."""
     if not DB_PATH.exists():
         return False
     init_ai_questions_table()
     conn = _get_conn()
     try:
         conn.execute("DELETE FROM ai_preset_questions")
+        used_keys = set()
         for i, q in enumerate(questions):
-            key = (q.get("key") or "").strip() or f"q{i}"
+            base_key = (q.get("key") or "").strip() or f"q{i}"
+            key = base_key
+            suffix = 2
+            while key in used_keys:
+                key = f"{base_key}_{suffix}"
+                suffix += 1
+            used_keys.add(key)
             text_de = (q.get("text_de") or "").strip() or ""
             text_en = (q.get("text_en") or "").strip() or ""
             sort_order = int(q.get("sort_order", i))

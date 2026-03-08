@@ -142,6 +142,7 @@ export default function App() {
   const [adminSortOrder, setAdminSortOrder] = useState('asc')
   const [finanzenChartClickPayload, setFinanzenChartClickPayload] = useState(null)
   const [finanzenChartClickPosition, setFinanzenChartClickPosition] = useState(null)
+  const [finanzenStickyPayload, setFinanzenStickyPayload] = useState(null)
   const [finanzenChartMouseY, setFinanzenChartMouseY] = useState(null)
   const [finanzenChartBounds, setFinanzenChartBounds] = useState(null)
   const [finanzenAiLoadingKey, setFinanzenAiLoadingKey] = useState(null)
@@ -168,12 +169,14 @@ export default function App() {
       if (finanzenChartDropdownRef.current && !finanzenChartDropdownRef.current.contains(e.target) && !e.target.closest('.recharts-wrapper') && !e.target.closest('[data-finanzen-open]')) {
         setFinanzenChartClickPayload(null)
         setFinanzenChartClickPosition(null)
+        setFinanzenStickyPayload(null)
       }
     }
     const closeContext = (e) => {
       if (finanzenChartDropdownRef.current && !finanzenChartDropdownRef.current.contains(e.target) && !e.target.closest('.recharts-wrapper')) {
         setFinanzenChartClickPayload(null)
         setFinanzenChartClickPosition(null)
+        setFinanzenStickyPayload(null)
       }
     }
     document.addEventListener('click', close)
@@ -961,6 +964,62 @@ export default function App() {
     const unit = yAxisUnit || ''
     return [{ d, c: t('chart.tooltipValue'), v: `${val} ${unit}`.trim() }]
   })()
+
+  const computePlaceholdersFromPayload = (p, mouseY, bounds) => {
+    if (!p) return []
+    const d = formatDate(p.date)
+    if (hasMultiSeries) {
+      const series = [
+        { key: 'tga', label: labelTGA, unit: yAxisUnit, axis: 'left' },
+        { key: 'wdtgal', label: labelWDTGAL, unit: yAxisUnit, axis: 'left' },
+        { key: 'rrp', label: labelRRP, unit: yAxisUnit, axis: 'left' },
+        { key: 'wresbal', label: labelWRESBAL, unit: yAxisUnit, axis: 'left' },
+        { key: 'sofr', label: labelSOFR, unit: '%', axis: 'right' },
+        { key: 'effr', label: labelEFFR, unit: '%', axis: 'right' },
+      ].filter(({ key }) => p[key] != null && p[key] !== '')
+      if (series.length === 0) return []
+      if (mouseY != null && bounds) {
+        const { top, bottom } = bounds
+        const chartTop = top + 5
+        const chartBottom = bottom - 5
+        const h = chartBottom - chartTop
+        if (h > 0) {
+          const t = (mouseY - chartTop) / h
+          const leftVal = leftDomain[1] - t * (leftDomain[1] - leftDomain[0])
+          const rightVal = rightDomain[1] - t * (rightDomain[1] - rightDomain[0])
+          const leftRange = leftDomain[1] - leftDomain[0] || 1
+          const rightRange = rightDomain[1] - rightDomain[0] || 1
+          let best = series[0]
+          let bestDist = Infinity
+          for (const s of series) {
+            const val = p[s.key]
+            const range = s.axis === 'left' ? leftRange : rightRange
+            const mouseVal = s.axis === 'left' ? leftVal : rightVal
+            const dist = Math.abs(Number(val) - mouseVal) / range
+            if (dist < bestDist) {
+              bestDist = dist
+              best = s
+            }
+          }
+          const val = p[best.key]
+          const vStr = typeof val === 'number' ? val.toLocaleString(locale, { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : String(val)
+          return [{ d, c: best.label, v: `${vStr} ${best.unit}`.trim() }]
+        }
+      }
+      const first = series[0]
+      const val = p[first.key]
+      const vStr = typeof val === 'number' ? val.toLocaleString(locale, { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : String(val)
+      return [{ d, c: first.label, v: `${vStr} ${first.unit}`.trim() }]
+    }
+    const val = p.value != null ? Number(p.value).toLocaleString(locale, { maximumFractionDigits: 2 }) : '–'
+    const unit = yAxisUnit || ''
+    return [{ d, c: t('chart.tooltipValue'), v: `${val} ${unit}`.trim() }]
+  }
+
+  const finanzenEffectivePayload = finanzenStickyPayload ? finanzenStickyPayload.payload : finanzenChartClickPayload
+  const finanzenEffectivePlaceholdersList = finanzenStickyPayload
+    ? computePlaceholdersFromPayload(finanzenStickyPayload.payload, finanzenStickyPayload.mouseY, finanzenStickyPayload.bounds)
+    : finanzenPlaceholdersList
 
   const [visibleSeries, setVisibleSeries] = useState({ tga: true, wdtgal: true, rrp: true, wresbal: true, sofr: true, effr: true })
   const [visibleKurseSeries, setVisibleKurseSeries] = useState({ sp500: true, djia: true, nasdaq: true, dax: true, btc: true, eth: true, ltc: true })
@@ -1958,7 +2017,7 @@ export default function App() {
                           zIndex: 10,
                         }}
                       >
-                        {(aiPresetQuestions.length ? aiPresetQuestions : [{ key: 'stocks', text: t('news.aiQuestionStocks') }, { key: 'btc', text: t('news.aiQuestionBtc') }]).map((q) => {
+                        {(aiPresetQuestions.filter((q) => (q.key || '').includes('XN'))).map((q) => {
                           const cacheEntry = (aiCacheStatusByIndex[i] || []).find((c) => (c.question_text || '').trim() === (q.text || '').trim())
                           const modelNames = { 'gemini-2.5-flash': t('config.gemini25Flash'), 'gemini-2.5-pro': t('config.gemini25Pro'), 'claude-sonnet-4-6': t('config.sonnet46') }
                           const modelLabel = cacheEntry?.model ? (modelNames[cacheEntry.model] || cacheEntry.model) : ''
@@ -2195,6 +2254,7 @@ export default function App() {
                     data-finanzen-open
                     onClick={() => {
                       setFinanzenChartMouseY(null)
+                      setFinanzenStickyPayload(null)
                       setFinanzenChartClickPayload((slicedChartData.length > 0 ? slicedChartData : chartData)[0] || null)
                       setFinanzenChartClickPosition(null)
                     }}
@@ -2211,6 +2271,16 @@ export default function App() {
                     setFinanzenChartBounds(finanzenChartContainerRef.current?.getBoundingClientRect() ?? null)
                   }}
                   onMouseLeave={() => setFinanzenChartMouseY(null)}
+                  onContextMenu={(e) => {
+                    if (finanzenChartClickPayload && finanzenChartContainerRef.current?.contains(e.target)) {
+                      e.preventDefault()
+                      setFinanzenStickyPayload({
+                        payload: finanzenChartClickPayload,
+                        mouseY: finanzenChartMouseY,
+                        bounds: finanzenChartBounds,
+                      })
+                    }
+                  }}
                   style={{ width: '100%' }}
                 >
                 <ResponsiveContainer width="100%" height={320}>
@@ -2257,7 +2327,7 @@ export default function App() {
                   </LineChart>
                 </ResponsiveContainer>
                 </div>
-                {finanzenChartClickPayload && (
+                {(finanzenEffectivePayload || finanzenChartClickPayload) && (
                   <div
                     ref={finanzenChartDropdownRef}
                     data-finanzen-ai-dropdown
@@ -2281,11 +2351,11 @@ export default function App() {
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                       <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#334155' }}>
-                        {t('chart.pointSelected')}: {formatDate(finanzenChartClickPayload.date)}
+                        {t('chart.pointSelected')}: {formatDate((finanzenEffectivePayload || finanzenChartClickPayload).date)}
                       </span>
                       <button
                         type="button"
-                        onClick={() => { setFinanzenChartClickPayload(null); setFinanzenChartClickPosition(null) }}
+                        onClick={() => { setFinanzenChartClickPayload(null); setFinanzenChartClickPosition(null); setFinanzenStickyPayload(null) }}
                         style={{ padding: '0.2rem 0.5rem', fontSize: '0.85rem', background: '#e2e8f0', border: '1px solid #cbd5e1', borderRadius: 4, cursor: 'pointer' }}
                       >
                         {t('chart.close')}
@@ -2293,11 +2363,11 @@ export default function App() {
                     </div>
                     <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '0.5rem' }}>{t('chart.aiQuestionsHint')}</div>
                     <ul style={{ margin: 0, paddingLeft: '0.5rem', listStyle: 'none', fontSize: '0.9rem', color: '#475569' }}>
-                      {(finanzenPlaceholdersList.length === 0 ? [{ d: formatDate(finanzenChartClickPayload?.date), c: '–', v: '–' }] : finanzenPlaceholdersList).map((ph) =>
-                        (aiPresetQuestions.length ? aiPresetQuestions : [{ key: 'stocks', text: t('news.aiQuestionStocks') }, { key: 'btc', text: t('news.aiQuestionBtc') }]).map((q) => {
+                      {(finanzenEffectivePlaceholdersList.length === 0 ? [{ d: formatDate(finanzenEffectivePayload?.date), c: '–', v: '–' }] : finanzenEffectivePlaceholdersList).map((ph) =>
+                        (aiPresetQuestions.filter((q) => (q.key || '').includes('XS'))).map((q) => {
                           const text = (q.text || '').replace(/%d/g, ph.d).replace(/%c/g, ph.c).replace(/%v/g, ph.v)
                           const summary = `${ph.c}: ${ph.v}`
-                          const title = finanzenChartClickPayload ? formatDate(finanzenChartClickPayload.date) : ''
+                          const title = finanzenEffectivePayload ? formatDate(finanzenEffectivePayload.date) : ''
                           const isLoading = finanzenAiLoadingKey === text
                           const res = finanzenAiResponseByKey[text]
                           return (
